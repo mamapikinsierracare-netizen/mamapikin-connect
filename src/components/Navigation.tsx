@@ -2,16 +2,33 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { getCurrentUser } from '@/lib/auth'
+import LogoutButton from './LogoutButton'
 
 export default function Navigation() {
   const pathname = usePathname()
+  const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
   
   const navItems = [
-    { name: 'Home', path: '/', icon: '🏠' },
-    { name: 'Register Patient', path: '/register', icon: '📝' },
-    { name: 'ANC Visit', path: '/anc', icon: '🤰' },
-    { name: 'Immunisation', path: '/immunisation', icon: '💉' },
-  ]
+  { name: 'Home', path: '/', icon: '🏠' },
+  { name: 'Register Patient', path: '/register', icon: '📝' },
+  { name: 'ANC Visit', path: '/anc', icon: '🤰' },
+  { name: 'PNC Visit', path: '/pnc', icon: '👩‍👧' },
+  { name: 'Delivery', path: '/delivery', icon: '👶' },
+  { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },  // ADD THIS
+  { name: 'Immunisation', path: '/immunisation', icon: '💉' },
+]
+  
+    useEffect(() => {
+    async function loadUser() {
+      const { user } = await getCurrentUser()
+      setUser(user)
+      setLoading(false)
+    }
+    loadUser()
+  }, [])
   
   return (
     <nav className="bg-green-700 text-white shadow-lg">
@@ -40,6 +57,16 @@ export default function Navigation() {
                 <span className="text-sm">{item.name}</span>
               </Link>
             ))}
+            
+            {/* User Info and Logout */}
+            {!loading && user && (
+              <div className="flex items-center gap-2 ml-4 pl-4 border-l border-green-500">
+                <span className="text-sm">
+                  👤 {user.email?.split('@')[0]}
+                </span>
+                <LogoutButton />
+              </div>
+            )}
           </div>
         </div>
       </div>
