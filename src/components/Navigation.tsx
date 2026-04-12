@@ -17,7 +17,8 @@ export default function Navigation() {
   { name: 'ANC Visit', path: '/anc', icon: '🤰' },
   { name: 'PNC Visit', path: '/pnc', icon: '👩‍👧' },
   { name: 'Delivery', path: '/delivery', icon: '👶' },
-  { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },  // ADD THIS
+  { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },
+  { name: 'Laboratory', path: '/lab', icon: '🔬' },  // ADD THIS
   { name: 'Immunisation', path: '/immunisation', icon: '💉' },
 ]
   
