@@ -41,24 +41,43 @@ async function testSupabaseConnection(): Promise<boolean> {
   } catch { return false }
 }
 
-import { supabase } from '@/lib/supabaseClient'
-
+// Save to Supabase (cloud)
 async function saveToSupabase(patientData: PatientData): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('Missing Supabase credentials')
+    return false
+  }
+  
+  // IMPORTANT: Remove the 'id' field if it exists (let Supabase auto-generate it)
+  const { id, ...dataWithoutId } = patientData as any
+  
+  console.log('📤 Saving to Supabase (without id):', dataWithoutId)
+  
   try {
-    const { error } = await supabase
-      .from('patients')
-      .insert([patientData])
-      .select()
+    const response = await fetch(`${supabaseUrl}/rest/v1/patients`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(dataWithoutId)  // ← Send without 'id'
+    })
     
-    if (error) {
-      console.error('Supabase error:', error)
+    if (response.ok) {
+      console.log('✅ Saved to Supabase!')
+      return true
+    } else {
+      const errorText = await response.text()
+      console.error('❌ Supabase error:', response.status, errorText)
       return false
     }
-    
-    console.log('☁️ Saved to Supabase!')
-    return true
   } catch (error) {
-    console.error('Network error:', error)
+    console.error('❌ Network error:', error)
     return false
   }
 }
