@@ -3,19 +3,23 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Singleton pattern to avoid multiple instances
+let supabaseInstance: ReturnType<typeof createClient> | null = null
 
-// Sign up a new user
-export async function signUp(email: string, password: string, userData: any) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: userData
-    }
-  })
-  return { data, error }
+export const getSupabase = () => {
+  if (!supabaseInstance) {
+    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    })
+  }
+  return supabaseInstance
 }
+
+export const supabase = getSupabase()
 
 // Sign in a user
 export async function signIn(email: string, password: string) {
@@ -48,14 +52,4 @@ export async function getSession() {
 export async function isAuthenticated() {
   const { user } = await getCurrentUser()
   return !!user
-}
-
-// Get user role from user metadata
-export function getUserRole(user: any): string {
-  return user?.user_metadata?.role || 'patient'
-}
-
-// Listen to auth changes
-export function onAuthChange(callback: (event: string, session: any) => void) {
-  return supabase.auth.onAuthStateChange(callback)
 }

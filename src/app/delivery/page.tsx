@@ -1,174 +1,374 @@
 'use client'
 
-import { useState } from 'react'
-import { supabase } from '@/lib/auth'
+import { useState, useEffect, useRef } from 'react'
 import Navigation from '@/components/Navigation'
 
-interface Patient {
-  id: string
+// Types
+type Patient = {
+  patient_id: string
   full_name: string
-  phone: string
-  is_pregnant: boolean
+  phone: string | null
+  district: string | null
+  village: string | null
+  date_of_birth: string | null
+}
+
+type Delivery = {
+  id?: number
+  delivery_id: string
+  patient_id: string
+  delivery_date: string
+  delivery_place: string
+  mode_of_delivery: string
+  attended_by: string
+  labour_duration_hours: number | null
+  rupture_of_membranes_hours: number | null
+  oxytocin_used: boolean
+  baby_name: string
+  baby_gender: string
+  birth_weight: number | null
+  birth_length: number | null
+  head_circumference: number | null
+  apgar_1min: number | null
+  apgar_5min: number | null
+  apgar_10min: number | null
+  resuscitation: boolean
+  baby_condition: string
+  maternal_complications: string[]
+  estimated_blood_loss: number | null
+  pph_risk_score: number | null
+  placenta_complete: boolean
+  perineal_tear: string
+  episiotomy: boolean
+  maternal_outcome: string
+  baby_outcome: string
+  referral_to: string
+  notes: string
+  visit_date: string
+  synced_to_cloud: boolean
+}
+
+// Helper function
+function safeString(value: any): string {
+  if (!value || value === null || value === undefined) return ''
+  return String(value)
+}
+
+// Check Supabase connection
+async function isSupabaseReachable(): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !supabaseAnonKey) return false
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+    const response = await fetch(`${supabaseUrl}/rest/v1/patients?limit=1`, {
+      headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` },
+      signal: controller.signal
+    })
+    clearTimeout(timeoutId)
+    return response.status === 200 || response.status === 206
+  } catch { return false }
+}
+
+// Get all patients
+async function getAllPatients(): Promise<Patient[]> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const results: Patient[] = []
+  const seenIds = new Set<string>()
+  
+  const localPatients = localStorage.getItem('offline_patients')
+  if (localPatients) {
+    const localList: Patient[] = JSON.parse(localPatients)
+    localList.forEach(p => {
+      if (p && p.patient_id && !seenIds.has(p.patient_id)) {
+        seenIds.add(p.patient_id)
+        results.push({
+          patient_id: safeString(p.patient_id),
+          full_name: safeString(p.full_name),
+          phone: p.phone || null,
+          district: p.district || null,
+          village: p.village || null,
+          date_of_birth: p.date_of_birth || null
+        })
+      }
+    })
+  }
+  
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/patients?select=patient_id,full_name,phone,district,village,date_of_birth&order=full_name`, {
+        headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` }
+      })
+      if (response.ok) {
+        const cloudPatients: Patient[] = await response.json()
+        cloudPatients.forEach(p => {
+          if (p && p.patient_id && !seenIds.has(p.patient_id)) {
+            seenIds.add(p.patient_id)
+            results.push({
+              patient_id: safeString(p.patient_id),
+              full_name: safeString(p.full_name),
+              phone: p.phone || null,
+              district: p.district || null,
+              village: p.village || null,
+              date_of_birth: p.date_of_birth || null
+            })
+          }
+        })
+      }
+    } catch { /* ignore */ }
+  }
+  
+  return results.sort((a, b) => safeString(a.full_name).localeCompare(safeString(b.full_name)))
+}
+
+// Get existing deliveries
+async function getPatientDeliveries(patientId: string): Promise<Delivery[]> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  const localKey = `deliveries_${patientId}`
+  const localDeliveries = localStorage.getItem(localKey)
+  const localList: Delivery[] = localDeliveries ? JSON.parse(localDeliveries) : []
+  
+  let cloudList: Delivery[] = []
+  
+  if (supabaseUrl && supabaseAnonKey) {
+    try {
+      const response = await fetch(`${supabaseUrl}/rest/v1/deliveries?patient_id=eq.${patientId}&order=delivery_date.desc`, {
+        headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` }
+      })
+      if (response.ok) {
+        cloudList = await response.json()
+      }
+    } catch { /* ignore */ }
+  }
+  
+  const allDeliveries = [...localList, ...cloudList]
+  return allDeliveries.sort((a, b) => new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime())
+}
+
+// Save delivery
+async function saveDelivery(delivery: Delivery, isOnline: boolean): Promise<{ local: boolean; cloud: boolean }> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  const localKey = `deliveries_${delivery.patient_id}`
+  const existing = localStorage.getItem(localKey)
+  const deliveries = existing ? JSON.parse(existing) : []
+  deliveries.push(delivery)
+  localStorage.setItem(localKey, JSON.stringify(deliveries))
+  console.log('💾 Saved to localStorage')
+  
+  let cloudSaved = false
+  
+  if (isOnline && supabaseUrl && supabaseAnonKey) {
+    try {
+      const { id, ...dataWithoutId } = delivery as any
+      const response = await fetch(`${supabaseUrl}/rest/v1/deliveries`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(dataWithoutId)
+      })
+      
+      if (response.ok) {
+        cloudSaved = true
+        console.log('✅ Saved to Supabase cloud!')
+      } else {
+        const errorText = await response.text()
+        console.log('❌ Supabase save failed:', response.status, errorText)
+      }
+    } catch (error) {
+      console.log('❌ Supabase save error:', error)
+    }
+  }
+  
+  return { local: true, cloud: cloudSaved }
+}
+
+// Calculate APGAR score display
+function getApgarInterpretation(score: number | null): string {
+  if (score === null) return ''
+  if (score >= 7) return '✅ Normal'
+  if (score >= 4) return '⚠️ Moderately abnormal'
+  return '🔴 Critically low'
+}
+
+// Calculate PPH risk score (Postpartum Haemorrhage)
+function calculatePphRisk(riskFactors: string[]): { score: number; risk: string } {
+  let score = 0
+  if (riskFactors.includes('Previous PPH')) score += 2
+  if (riskFactors.includes('Multiple pregnancy')) score += 2
+  if (riskFactors.includes('Grand multipara (≥5 deliveries)')) score += 1
+  if (riskFactors.includes('Prolonged labour (>12 hours)')) score += 2
+  if (riskFactors.includes('Placenta praevia')) score += 3
+  if (riskFactors.includes('Pre-eclampsia')) score += 1
+  if (riskFactors.includes('Anaemia (Hb <9)')) score += 1
+  if (riskFactors.includes('Age >35')) score += 1
+  
+  let risk = 'Low'
+  if (score >= 5) risk = 'High'
+  else if (score >= 3) risk = 'Moderate'
+  
+  return { score, risk }
 }
 
 export default function DeliveryPage() {
-  // State for patient search
+  const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline' | 'checking'>('checking')
   const [searchTerm, setSearchTerm] = useState('')
-  const [patients, setPatients] = useState<Patient[]>([])
+  const [allPatients, setAllPatients] = useState<Patient[]>([])
+  const [filteredPatients, setFilteredPatients] = useState<Patient[]>([])
+  const [showDropdown, setShowDropdown] = useState(false)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
-  const [searching, setSearching] = useState(false)
-  
-  // State for delivery form
-  const [deliveryData, setDeliveryData] = useState({
-    mode_of_delivery: '',
-    delivery_place: 'Facility',
-    baby1_gender: '',
-    baby1_birth_weight_kg: '',
-    baby1_birth_length_cm: '',
-    baby1_apgar_1min: '',
-    baby1_apgar_5min: '',
-    is_multiple_pregnancy: false,
-    baby2_gender: '',
-    baby2_birth_weight_kg: '',
-    baby2_birth_length_cm: '',
-    estimated_blood_loss_ml: '',
-    amtsl_oxytocin_given: true,
-    amtsl_controlled_cord_traction: true,
-    amtsl_uterine_massage: true,
-  })
-  
-  const [complications, setComplications] = useState({
-    pph: false,
-    retained_placenta: false,
-    uterine_rupture: false,
-    eclampsia: false,
-  })
-  
-  const [pphRiskScore, setPphRiskScore] = useState(0)
-  const [pphRiskLevel, setPphRiskLevel] = useState('')
-  const [apgarColor, setApgarColor] = useState('')
-  
+  const [existingDeliveries, setExistingDeliveries] = useState<Delivery[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('success')
-  const [alertLevel, setAlertLevel] = useState('normal')
+  const [pphRisk, setPphRisk] = useState<{ score: number; risk: string }>({ score: 0, risk: 'Low' })
+  const searchRef = useRef<HTMLDivElement>(null)
+  
+  const [formData, setFormData] = useState<Partial<Delivery>>({
+    delivery_date: new Date().toISOString().split('T')[0],
+    delivery_place: 'Facility',
+    mode_of_delivery: 'SVD',
+    attended_by: '',
+    labour_duration_hours: null,
+    rupture_of_membranes_hours: null,
+    oxytocin_used: false,
+    baby_name: '',
+    baby_gender: '',
+    birth_weight: null,
+    birth_length: null,
+    head_circumference: null,
+    apgar_1min: null,
+    apgar_5min: null,
+    apgar_10min: null,
+    resuscitation: false,
+    baby_condition: 'Alive and well',
+    maternal_complications: [],
+    estimated_blood_loss: null,
+    pph_risk_score: null,
+    placenta_complete: true,
+    perineal_tear: 'None',
+    episiotomy: false,
+    maternal_outcome: 'Alive',
+    baby_outcome: 'Alive',
+    referral_to: '',
+    notes: '',
+  })
 
-  // Search for patients
-  async function searchPatients() {
-    if (searchTerm.length < 2) return
-    
-    setSearching(true)
-    const { data, error } = await supabase
-      .from('patients')
-      .select('id, full_name, phone, is_pregnant')
-      .ilike('full_name', `%${searchTerm}%`)
-      .limit(10)
-    
-    if (!error && data) {
-      setPatients(data)
+  // PPH risk factors state
+  const [pphRiskFactors, setPphRiskFactors] = useState<string[]>([])
+
+  // Check connection status
+  useEffect(() => {
+    async function checkConnection() {
+      const online = await isSupabaseReachable()
+      setConnectionStatus(online ? 'online' : 'offline')
     }
-    setSearching(false)
-  }
+    checkConnection()
+    const interval = setInterval(checkConnection, 10000)
+    return () => clearInterval(interval)
+  }, [])
 
-  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setSearchTerm(e.target.value)
-    if (e.target.value.length >= 2) {
-      searchPatients()
+  // Load patients
+  useEffect(() => {
+    async function loadPatients() {
+      const patients = await getAllPatients()
+      setAllPatients(patients)
+      setFilteredPatients(patients)
+    }
+    loadPatients()
+  }, [])
+
+  // Filter patients
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredPatients(allPatients)
     } else {
-      setPatients([])
+      const lowerSearch = searchTerm.toLowerCase()
+      const filtered = allPatients.filter(p => {
+        if (!p) return false
+        const fullName = safeString(p.full_name).toLowerCase()
+        const patientId = safeString(p.patient_id).toLowerCase()
+        const phone = safeString(p.phone).toLowerCase()
+        return fullName.includes(lowerSearch) || patientId.includes(lowerSearch) || phone.includes(lowerSearch)
+      })
+      setFilteredPatients(filtered)
     }
-  }
+  }, [searchTerm, allPatients])
 
-  function selectPatient(patient: Patient) {
+  // Close dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Load existing deliveries
+  useEffect(() => {
+    if (selectedPatient) {
+      getPatientDeliveries(selectedPatient.patient_id).then(deliveries => {
+        setExistingDeliveries(deliveries)
+      })
+    }
+  }, [selectedPatient])
+
+  // Calculate PPH risk when risk factors change
+  useEffect(() => {
+    const result = calculatePphRisk(pphRiskFactors)
+    setPphRisk(result)
+    setFormData(prev => ({ ...prev, pph_risk_score: result.score }))
+  }, [pphRiskFactors])
+
+  function handleSelectPatient(patient: Patient) {
     setSelectedPatient(patient)
     setSearchTerm('')
-    setPatients([])
+    setShowDropdown(false)
   }
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
+  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
     const { name, value, type } = e.target
     const checked = (e.target as HTMLInputElement).checked
     
-    setDeliveryData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }))
-  }
-
-  // Calculate APGAR score and color
-  function getApgarColor(score: number): string {
-    if (score >= 7) return 'text-green-600'
-    if (score >= 4) return 'text-orange-600'
-    return 'text-red-600'
-  }
-
-  function getApgarInterpretation(score: number): string {
-    if (score >= 7) return 'Good - Routine care'
-    if (score >= 4) return 'Moderate - Some assistance needed'
-    return 'Critical - Resuscitation required!'
-  }
-
-  // Calculate PPH Risk Score
-  function calculatePPHRisk() {
-    let score = 0
-    let reasons = []
-    
-    if (deliveryData.mode_of_delivery === 'C-section') {
-      score += 2
-      reasons.push('C-section')
-    }
-    if (deliveryData.baby1_birth_weight_kg && parseFloat(deliveryData.baby1_birth_weight_kg) > 4) {
-      score += 2
-      reasons.push('Large baby (>4kg)')
-    }
-    if (deliveryData.is_multiple_pregnancy) {
-      score += 2
-      reasons.push('Multiple pregnancy')
-    }
-    if (complications.retained_placenta) {
-      score += 3
-      reasons.push('History of retained placenta')
-    }
-    
-    setPphRiskScore(score)
-    
-    let level = ''
-    let alert = ''
-    if (score >= 5) {
-      level = 'High'
-      alert = '🔴 HIGH PPH RISK - Cross-match blood, prepare PPH kit, senior staff present'
-      setAlertLevel('red')
-    } else if (score >= 3) {
-      level = 'Moderate'
-      alert = '🟠 MODERATE PPH RISK - Prepare oxytocin, senior staff advised'
-      setAlertLevel('orange')
+    if (type === 'checkbox' && name === 'maternal_complications') {
+      const current = formData.maternal_complications as string[]
+      if (checked) {
+        setFormData({ ...formData, [name]: [...current, value] })
+      } else {
+        setFormData({ ...formData, [name]: current.filter(v => v !== value) })
+      }
+    } else if (type === 'checkbox' && name === 'pph_risk_factors') {
+      if (checked) {
+        setPphRiskFactors([...pphRiskFactors, value])
+      } else {
+        setPphRiskFactors(pphRiskFactors.filter(v => v !== value))
+      }
+    } else if (type === 'checkbox') {
+      setFormData({ ...formData, [name]: checked })
+    } else if (['birth_weight', 'birth_length', 'head_circumference'].includes(name)) {
+      setFormData({ ...formData, [name]: value ? parseFloat(value) : null })
+    } else if (['labour_duration_hours', 'rupture_of_membranes_hours', 'estimated_blood_loss', 'apgar_1min', 'apgar_5min', 'apgar_10min'].includes(name)) {
+      setFormData({ ...formData, [name]: value ? parseInt(value) : null })
     } else {
-      level = 'Low'
-      alert = '🟢 Low PPH risk - Routine AMTSL'
-      setAlertLevel('normal')
+      setFormData({ ...formData, [name]: value })
     }
-    
-    setPphRiskLevel(level)
-    if (alert) setMessage(alert)
-  }
-
-  // Update PPH risk when relevant fields change
-  function handleWithRiskUpdate(e: any) {
-    handleChange(e)
-    setTimeout(calculatePPHRisk, 100)
-  }
-
-  function handleComplicationChange(complication: string, checked: boolean) {
-    setComplications(prev => ({ ...prev, [complication]: checked }))
-    setTimeout(calculatePPHRisk, 100)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    
     if (!selectedPatient) {
+      setMessage('❌ Please select a patient first')
       setMessageType('error')
-      setMessage('Please select a patient first')
       return
     }
     
@@ -176,78 +376,94 @@ export default function DeliveryPage() {
     setMessage('')
     
     try {
-      // Calculate APGAR interpretation
-      const apgar1 = parseInt(deliveryData.baby1_apgar_1min) || 0
-      const resuscitationNeeded = apgar1 < 7
+      const deliveryId = `DEL-${selectedPatient.patient_id}-${Date.now()}`
       
-      const deliveryRecord = {
-        patient_id: selectedPatient.id,
-        delivery_date: new Date().toISOString().split('T')[0],
-        delivery_time: new Date().toLocaleTimeString(),
-        mode_of_delivery: deliveryData.mode_of_delivery,
-        delivery_place: deliveryData.delivery_place,
-        baby1_gender: deliveryData.baby1_gender,
-        baby1_birth_weight_kg: parseFloat(deliveryData.baby1_birth_weight_kg) || null,
-        baby1_birth_length_cm: parseFloat(deliveryData.baby1_birth_length_cm) || null,
-        baby1_apgar_1min: parseInt(deliveryData.baby1_apgar_1min) || null,
-        baby1_apgar_5min: parseInt(deliveryData.baby1_apgar_5min) || null,
-        baby1_resuscitation_required: resuscitationNeeded,
-        is_multiple_pregnancy: deliveryData.is_multiple_pregnancy,
-        baby2_gender: deliveryData.is_multiple_pregnancy ? deliveryData.baby2_gender : null,
-        baby2_birth_weight_kg: deliveryData.is_multiple_pregnancy ? parseFloat(deliveryData.baby2_birth_weight_kg) || null : null,
-        baby2_birth_length_cm: deliveryData.is_multiple_pregnancy ? parseFloat(deliveryData.baby2_birth_length_cm) || null : null,
-        estimated_blood_loss_ml: parseInt(deliveryData.estimated_blood_loss_ml) || null,
-        pph_occurred: complications.pph,
-        retained_placenta: complications.retained_placenta,
-        uterine_rupture: complications.uterine_rupture,
-        eclampsia_occurred: complications.eclampsia,
-        pph_risk_score: pphRiskScore,
-        pph_risk_level: pphRiskLevel,
-        amtsl_oxytocin_given: deliveryData.amtsl_oxytocin_given,
-        amtsl_controlled_cord_traction: deliveryData.amtsl_controlled_cord_traction,
-        amtsl_uterine_massage: deliveryData.amtsl_uterine_massage,
-        maternal_outcome: complications.pph || complications.retained_placenta ? 'Complicated' : 'Stable',
-        baby1_outcome: 'Alive',
-        attended_by: 'nurse'
+      const delivery: Delivery = {
+        delivery_id: deliveryId,
+        patient_id: selectedPatient.patient_id,
+        delivery_date: formData.delivery_date || new Date().toISOString(),
+        delivery_place: formData.delivery_place || 'Facility',
+        mode_of_delivery: formData.mode_of_delivery || 'SVD',
+        attended_by: formData.attended_by || '',
+        labour_duration_hours: formData.labour_duration_hours || null,
+        rupture_of_membranes_hours: formData.rupture_of_membranes_hours || null,
+        oxytocin_used: formData.oxytocin_used || false,
+        baby_name: formData.baby_name || '',
+        baby_gender: formData.baby_gender || '',
+        birth_weight: formData.birth_weight || null,
+        birth_length: formData.birth_length || null,
+        head_circumference: formData.head_circumference || null,
+        apgar_1min: formData.apgar_1min || null,
+        apgar_5min: formData.apgar_5min || null,
+        apgar_10min: formData.apgar_10min || null,
+        resuscitation: formData.resuscitation || false,
+        baby_condition: formData.baby_condition || 'Alive and well',
+        maternal_complications: formData.maternal_complications || [],
+        estimated_blood_loss: formData.estimated_blood_loss || null,
+        pph_risk_score: pphRisk.score,
+        placenta_complete: formData.placenta_complete !== false,
+        perineal_tear: formData.perineal_tear || 'None',
+        episiotomy: formData.episiotomy || false,
+        maternal_outcome: formData.maternal_outcome || 'Alive',
+        baby_outcome: formData.baby_outcome || 'Alive',
+        referral_to: formData.referral_to || '',
+        notes: formData.notes || '',
+        visit_date: new Date().toISOString(),
+        synced_to_cloud: false,
       }
       
-      const { error } = await supabase
-        .from('deliveries')
-        .insert([deliveryRecord])
+      const isOnline = connectionStatus === 'online'
+      const result = await saveDelivery(delivery, isOnline)
       
-      if (error) throw new Error(error.message)
-      
-      setMessageType('success')
-      setMessage(`✅ Delivery recorded successfully! Baby weight: ${deliveryData.baby1_birth_weight_kg}kg, APGAR: ${deliveryData.baby1_apgar_1min}`)
+      if (result.cloud) {
+        setMessageType('success')
+        setMessage(`✅ Delivery recorded and saved to CLOUD!`)
+      } else if (result.local && isOnline) {
+        setMessageType('warning')
+        setMessage(`⚠️ Delivery saved locally only. Cloud save failed.`)
+      } else {
+        setMessageType('success')
+        setMessage(`✅ Delivery saved locally! Will sync when online.`)
+      }
       
       // Reset form
-      setDeliveryData({
-        mode_of_delivery: '',
+      setFormData({
+        delivery_date: new Date().toISOString().split('T')[0],
         delivery_place: 'Facility',
-        baby1_gender: '',
-        baby1_birth_weight_kg: '',
-        baby1_birth_length_cm: '',
-        baby1_apgar_1min: '',
-        baby1_apgar_5min: '',
-        is_multiple_pregnancy: false,
-        baby2_gender: '',
-        baby2_birth_weight_kg: '',
-        baby2_birth_length_cm: '',
-        estimated_blood_loss_ml: '',
-        amtsl_oxytocin_given: true,
-        amtsl_controlled_cord_traction: true,
-        amtsl_uterine_massage: true,
+        mode_of_delivery: 'SVD',
+        attended_by: '',
+        labour_duration_hours: null,
+        rupture_of_membranes_hours: null,
+        oxytocin_used: false,
+        baby_name: '',
+        baby_gender: '',
+        birth_weight: null,
+        birth_length: null,
+        head_circumference: null,
+        apgar_1min: null,
+        apgar_5min: null,
+        apgar_10min: null,
+        resuscitation: false,
+        baby_condition: 'Alive and well',
+        maternal_complications: [],
+        estimated_blood_loss: null,
+        pph_risk_score: null,
+        placenta_complete: true,
+        perineal_tear: 'None',
+        episiotomy: false,
+        maternal_outcome: 'Alive',
+        baby_outcome: 'Alive',
+        referral_to: '',
+        notes: '',
       })
-      setComplications({
-        pph: false, retained_placenta: false, uterine_rupture: false, eclampsia: false
-      })
-      setPphRiskScore(0)
-      setPphRiskLevel('')
-      setAlertLevel('normal')
+      setPphRiskFactors([])
       
-    } catch (err: any) {
+      const updated = await getPatientDeliveries(selectedPatient.patient_id)
+      setExistingDeliveries(updated)
+      
+    } catch (error) {
       setMessageType('error')
-      setMessage(`❌ Error: ${err.message}`)
+      setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
@@ -258,379 +474,409 @@ export default function DeliveryPage() {
       <Navigation />
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-4xl mx-auto px-4">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-green-700">MamaPikin Connect</h1>
-            <p className="text-gray-600">Labour & Delivery - Birth Recording</p>
+          
+          {/* Status Banner */}
+          <div className={`mb-6 p-4 rounded-lg text-center ${
+            connectionStatus === 'online' ? 'bg-green-100 text-green-800 border-2 border-green-500' : 
+            connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border-2 border-red-500' :
+            'bg-gray-100 text-gray-800 border-2 border-gray-500'
+          }`}>
+            <div className="text-2xl font-bold">
+              {connectionStatus === 'online' ? '✅ ONLINE MODE - Connected to Supabase' : 
+               connectionStatus === 'offline' ? '📡 OFFLINE MODE - Saving locally only' :
+               '⏳ CHECKING CONNECTION...'}
+            </div>
+            <div className="text-sm mt-1">
+              {connectionStatus === 'online' ? 'Data will save to cloud immediately' : 
+               connectionStatus === 'offline' ? 'Data will save to local storage. Sync when online.' :
+               'Detecting network connection...'}
+            </div>
           </div>
           
-          {/* Alert Banner */}
-          {alertLevel === 'red' && (
-            <div className="mb-6 p-4 bg-red-600 text-white rounded-lg text-center font-bold">
-              🚨 EMERGENCY ALERT 🚨
-              <br />
-              {message}
-            </div>
-          )}
+          {/* Header */}
+          <div className="text-center mb-6">
+            <h1 className="text-3xl font-bold text-green-700">Labour & Delivery</h1>
+            <p className="text-gray-600">Record delivery information and maternal/baby outcomes</p>
+          </div>
           
-          {alertLevel === 'orange' && (
-            <div className="mb-6 p-4 bg-orange-500 text-white rounded-lg text-center font-bold">
-              ⚠️ WARNING ⚠️
-              <br />
-              {message}
-            </div>
-          )}
-          
-          {/* Message display */}
-          {message && alertLevel === 'normal' && (
-            <div className={`mb-6 p-4 rounded-lg ${
-              messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          {/* Message */}
+          {message && (
+            <div className={`mb-4 p-3 rounded-lg ${
+              messageType === 'success' ? 'bg-green-100 text-green-700 border border-green-400' : 
+              messageType === 'warning' ? 'bg-yellow-100 text-yellow-700 border border-yellow-400' :
+              'bg-red-100 text-red-700 border border-red-400'
             }`}>
               {message}
             </div>
           )}
           
-          {/* Patient Search */}
-          {!selectedPatient ? (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold mb-4">Step 1: Find Mother</h2>
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={handleSearchChange}
-                placeholder="Search by mother's name..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              {searching && <p className="text-gray-500 mt-2">Searching...</p>}
+          {/* Patient Selection */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">1. Select Patient</h2>
+            
+            <div ref={searchRef} className="relative">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
+                  <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onFocus={() => setShowDropdown(true)}
+                  placeholder="Search by name, patient ID, or phone number..."
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-200"
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                  >
+                    <svg className="h-5 w-5 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
               
-              {patients.length > 0 && (
-                <div className="mt-4 border rounded-lg overflow-hidden">
-                  {patients.map(patient => (
-                    <div
-                      key={patient.id}
-                      onClick={() => selectPatient(patient)}
-                      className="p-3 border-b hover:bg-gray-50 cursor-pointer"
-                    >
-                      <p className="font-medium">{patient.full_name}</p>
-                      <p className="text-sm text-gray-500">ID: {patient.id}</p>
+              {showDropdown && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-y-auto">
+                  {filteredPatients.length === 0 ? (
+                    <div className="p-4 text-gray-500 text-center">
+                      No patients found. <a href="/register" className="text-green-600 hover:underline">Register a new patient</a>
                     </div>
-                  ))}
+                  ) : (
+                    filteredPatients.map((patient, index) => (
+                      <div
+                        key={`${patient.patient_id}-${index}`}
+                        onClick={() => handleSelectPatient(patient)}
+                        className="p-3 hover:bg-green-50 cursor-pointer border-b last:border-b-0 transition-colors"
+                      >
+                        <div className="font-medium text-gray-800">{safeString(patient.full_name) || 'Unnamed Patient'}</div>
+                        <div className="text-sm text-gray-500">
+                          ID: {safeString(patient.patient_id)} | 📞 {patient.phone || 'No phone'} | 📍 {patient.district || 'No district'}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>
-          ) : (
-            <>
-              {/* Selected Patient */}
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                <div className="flex justify-between items-center">
+            
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDropdown(true)
+                  setSearchTerm('')
+                }}
+                className="text-sm text-green-600 hover:text-green-800 flex items-center gap-1"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                Browse all patients ({allPatients.length})
+              </button>
+            </div>
+            
+            {selectedPatient && (
+              <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                <div className="flex justify-between items-start">
                   <div>
-                    <p className="text-sm text-green-600">Selected Mother</p>
-                    <p className="font-bold text-lg">{selectedPatient.full_name}</p>
-                    <p className="text-sm">ID: {selectedPatient.id}</p>
+                    <div className="font-bold text-green-800 text-lg">{safeString(selectedPatient.full_name)}</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      <span className="font-medium">Patient ID:</span> {safeString(selectedPatient.patient_id)}<br />
+                      <span className="font-medium">Phone:</span> {selectedPatient.phone || 'N/A'}<br />
+                      <span className="font-medium">District:</span> {selectedPatient.district || 'N/A'}
+                    </div>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setSelectedPatient(null)}
-                    className="text-green-600 hover:text-green-800"
+                    className="text-red-600 hover:text-red-800 text-sm"
                   >
-                    Change Patient
+                    Change
                   </button>
                 </div>
               </div>
+            )}
+          </div>
+          
+          {/* Delivery Form */}
+          {selectedPatient && (
+            <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">
+                2. Delivery Record for {safeString(selectedPatient.full_name)}
+              </h2>
               
-              {/* Delivery Form */}
-              <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
-                {/* Delivery Information */}
-                <div className="border-b pb-4 mb-4">
-                  <h3 className="text-lg font-bold text-green-700 mb-4">🤱 Delivery Information</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-gray-700 mb-1">Mode of Delivery *</label>
-                      <select
-                        name="mode_of_delivery"
-                        value={deliveryData.mode_of_delivery}
-                        onChange={handleWithRiskUpdate}
-                        required
-                        className="w-full px-3 py-2 border rounded-lg"
-                      >
-                        <option value="">Select...</option>
-                        <option value="SVD">SVD (Spontaneous Vaginal Delivery)</option>
-                        <option value="C-section">C-section</option>
-                        <option value="Vacuum">Vacuum Assisted</option>
-                        <option value="Forceps">Forceps Assisted</option>
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-gray-700 mb-1">Delivery Place</label>
-                      <select
-                        name="delivery_place"
-                        value={deliveryData.delivery_place}
-                        onChange={handleChange}
-                        className="w-full px-3 py-2 border rounded-lg"
-                      >
-                        <option value="Facility">Health Facility</option>
-                        <option value="Home">Home</option>
-                        <option value="En Route">En Route to Facility</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
+              {/* Delivery Information */}
+              <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+                <h3 className="text-lg font-bold text-purple-800 mb-3">📋 Delivery Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Delivery Date</label>
+                    <input type="date" name="delivery_date" value={formData.delivery_date} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Delivery Place</label>
+                    <select name="delivery_place" value={formData.delivery_place} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="Facility">Health Facility</option>
+                      <option value="Home">Home</option>
+                      <option value="En Route">En Route to Facility</option>
+                      <option value="TBA">Traditional Birth Attendant</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Mode of Delivery</label>
+                    <select name="mode_of_delivery" value={formData.mode_of_delivery} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="SVD">Spontaneous Vaginal Delivery (SVD)</option>
+                      <option value="Assisted Vaginal">Assisted Vaginal Delivery</option>
+                      <option value="C-section">Caesarean Section</option>
+                      <option value="Vacuum">Vacuum Extraction</option>
+                      <option value="Forceps">Forceps Delivery</option>
+                      <option value="Breech">Breech Delivery</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Attended By</label>
+                    <input type="text" name="attended_by" value={formData.attended_by} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., Nurse Mariama, Dr. James" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Labour Duration (hours)</label>
+                    <input type="number" name="labour_duration_hours" value={formData.labour_duration_hours || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Rupture of Membranes (hours before delivery)</label>
+                    <input type="number" name="rupture_of_membranes_hours" value={formData.rupture_of_membranes_hours || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div className="flex items-center">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" name="oxytocin_used" checked={formData.oxytocin_used} onChange={handleChange} />
+                      <span>Oxytocin used during labour</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Baby Information */}
+              <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                <h3 className="text-lg font-bold text-blue-800 mb-3">👶 Baby Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Baby Name</label>
+                    <input type="text" name="baby_name" value={formData.baby_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., Fatmata Sesay" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Baby Gender</label>
+                    <select name="baby_gender" value={formData.baby_gender} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="">Select</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Intersex">Intersex</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Birth Weight (kg)</label>
+                    <input type="number" step="0.01" name="birth_weight" value={formData.birth_weight || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Birth Length (cm)</label>
+                    <input type="number" step="0.1" name="birth_length" value={formData.birth_length || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Head Circumference (cm)</label>
+                    <input type="number" step="0.1" name="head_circumference" value={formData.head_circumference || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
                   </div>
                 </div>
                 
-                {/* Baby Information */}
-                <div className="border-b pb-4 mb-4">
-                  <h3 className="text-lg font-bold text-green-700 mb-4">👶 Baby Information</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* APGAR Scores */}
+                <div className="mt-4">
+                  <label className="block text-gray-700 font-medium mb-2">APGAR Scores</label>
+                  <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-gray-700 mb-1">Baby Gender *</label>
-                      <select
-                        name="baby1_gender"
-                        value={deliveryData.baby1_gender}
-                        onChange={handleChange}
-                        required
-                        className="w-full px-3 py-2 border rounded-lg"
-                      >
-                        <option value="">Select...</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Intersex">Intersex</option>
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-gray-700 mb-1">Birth Weight (kg)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        name="baby1_birth_weight_kg"
-                        value={deliveryData.baby1_birth_weight_kg}
-                        onChange={handleWithRiskUpdate}
-                        placeholder="e.g., 3.2"
-                        className="w-full px-3 py-2 border rounded-lg"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-gray-700 mb-1">Birth Length (cm)</label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        name="baby1_birth_length_cm"
-                        value={deliveryData.baby1_birth_length_cm}
-                        onChange={handleChange}
-                        placeholder="e.g., 50"
-                        className="w-full px-3 py-2 border rounded-lg"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-gray-700 mb-1">APGAR Score (1 minute)</label>
-                      <input
-                        type="number"
-                        name="baby1_apgar_1min"
-                        value={deliveryData.baby1_apgar_1min}
-                        onChange={(e) => {
-                          handleChange(e)
-                          const score = parseInt(e.target.value)
-                          if (!isNaN(score)) {
-                            setApgarColor(getApgarColor(score))
-                          }
-                        }}
-                        className="w-full px-3 py-2 border rounded-lg"
-                      />
-                      {deliveryData.baby1_apgar_1min && (
-                        <p className={`text-sm mt-1 ${getApgarColor(parseInt(deliveryData.baby1_apgar_1min))}`}>
-                          {getApgarInterpretation(parseInt(deliveryData.baby1_apgar_1min))}
-                        </p>
+                      <label className="block text-sm text-gray-600">1 Minute</label>
+                      <input type="number" name="apgar_1min" value={formData.apgar_1min || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" min="0" max="10" />
+                      {formData.apgar_1min !== null && formData.apgar_1min !== undefined && (
+                        <span className="text-xs">{getApgarInterpretation(formData.apgar_1min)}</span>
                       )}
                     </div>
-                    
                     <div>
-                      <label className="block text-gray-700 mb-1">APGAR Score (5 minutes)</label>
-                      <input
-                        type="number"
-                        name="baby1_apgar_5min"
-                        value={deliveryData.baby1_apgar_5min}
-                        onChange={handleChange}
-                        className="w-full px-3 py-2 border rounded-lg"
-                      />
+                      <label className="block text-sm text-gray-600">5 Minutes</label>
+                      <input type="number" name="apgar_5min" value={formData.apgar_5min || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" min="0" max="10" />
+                      {formData.apgar_5min !== null && formData.apgar_5min !== undefined && (
+                        <span className="text-xs">{getApgarInterpretation(formData.apgar_5min)}</span>
+                      )}
                     </div>
-                  </div>
-                  
-                  {/* Multiple Pregnancy */}
-                  <div className="mt-3">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        name="is_multiple_pregnancy"
-                        checked={deliveryData.is_multiple_pregnancy}
-                        onChange={handleWithRiskUpdate}
-                        className="mr-2"
-                      />
-                      <span>Multiple pregnancy (twins/triplets)</span>
-                    </label>
-                  </div>
-                  
-                  {deliveryData.is_multiple_pregnancy && (
-                    <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                      <p className="font-medium mb-2">Baby 2 Information:</p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <select
-                          name="baby2_gender"
-                          value={deliveryData.baby2_gender}
-                          onChange={handleChange}
-                          className="px-3 py-2 border rounded-lg"
-                        >
-                          <option value="">Gender</option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                        </select>
-                        <input
-                          type="number"
-                          step="0.1"
-                          name="baby2_birth_weight_kg"
-                          value={deliveryData.baby2_birth_weight_kg}
-                          onChange={handleChange}
-                          placeholder="Weight (kg)"
-                          className="px-3 py-2 border rounded-lg"
-                        />
-                      </div>
+                    <div>
+                      <label className="block text-sm text-gray-600">10 Minutes</label>
+                      <input type="number" name="apgar_10min" value={formData.apgar_10min || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" min="0" max="10" />
                     </div>
-                  )}
-                </div>
-                
-                {/* PPH Risk Assessment */}
-                <div className="border-b pb-4 mb-4">
-                  <h3 className="text-lg font-bold text-green-700 mb-4">🩸 PPH Risk Assessment</h3>
-                  
-                  <div className="mb-3 p-3 bg-gray-50 rounded-lg">
-                    <p className="font-medium">Risk Factors:</p>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <label className="flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={complications.retained_placenta}
-                          onChange={(e) => handleComplicationChange('retained_placenta', e.target.checked)}
-                          className="mr-2"
-                        />
-                        Previous retained placenta
-                      </label>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={calculatePPHRisk}
-                      className="mt-2 text-sm text-green-600 hover:text-green-700"
-                    >
-                      Recalculate Risk
-                    </button>
-                  </div>
-                  
-                  {pphRiskLevel && (
-                    <div className={`p-3 rounded-lg text-center ${
-                      pphRiskLevel === 'High' ? 'bg-red-100 text-red-700' :
-                      pphRiskLevel === 'Moderate' ? 'bg-orange-100 text-orange-700' :
-                      'bg-green-100 text-green-700'
-                    }`}>
-                      PPH Risk Score: {pphRiskScore} - {pphRiskLevel} Risk
-                    </div>
-                  )}
-                </div>
-                
-                {/* AMTSL (Active Management) */}
-                <div className="border-b pb-4 mb-4">
-                  <h3 className="text-lg font-bold text-green-700 mb-4">💊 Active Management of Third Stage (AMTSL)</h3>
-                  <div className="space-y-2">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        name="amtsl_oxytocin_given"
-                        checked={deliveryData.amtsl_oxytocin_given}
-                        onChange={handleChange}
-                        className="mr-2"
-                      />
-                      Oxytocin given (10 IU IM)
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        name="amtsl_controlled_cord_traction"
-                        checked={deliveryData.amtsl_controlled_cord_traction}
-                        onChange={handleChange}
-                        className="mr-2"
-                      />
-                      Controlled cord traction performed
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        name="amtsl_uterine_massage"
-                        checked={deliveryData.amtsl_uterine_massage}
-                        onChange={handleChange}
-                        className="mr-2"
-                      />
-                      Uterine massage after delivery
-                    </label>
                   </div>
                 </div>
                 
-                {/* Complications */}
-                <div className="border-b pb-4 mb-4">
-                  <h3 className="text-lg font-bold text-red-600 mb-4">⚠️ Complications (if any)</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  <div className="flex items-center">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" name="resuscitation" checked={formData.resuscitation} onChange={handleChange} />
+                      <span>Resuscitation required</span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Baby Condition</label>
+                    <select name="baby_condition" value={formData.baby_condition} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="Alive and well">Alive and well</option>
+                      <option value="Alive with complications">Alive with complications</option>
+                      <option value="Stillbirth">Stillbirth</option>
+                      <option value="Neonatal death">Neonatal death</option>
+                      <option value="Referred to NICU">Referred to NICU</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Maternal Complications */}
+              <div className="mb-6 p-4 bg-red-50 rounded-lg">
+                <h3 className="text-lg font-bold text-red-800 mb-3">⚠️ Maternal Assessment</h3>
+                
+                <div className="mb-4">
+                  <label className="block text-gray-700 font-medium mb-2">PPH Risk Factors (Check all that apply)</label>
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={complications.pph}
-                        onChange={(e) => handleComplicationChange('pph', e.target.checked)}
-                        className="mr-2"
-                      />
-                      Postpartum Haemorrhage (PPH)
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={complications.uterine_rupture}
-                        onChange={(e) => handleComplicationChange('uterine_rupture', e.target.checked)}
-                        className="mr-2"
-                      />
-                      Uterine Rupture
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={complications.eclampsia}
-                        onChange={(e) => handleComplicationChange('eclampsia', e.target.checked)}
-                        className="mr-2"
-                      />
-                      Eclampsia
+                    {['Previous PPH', 'Multiple pregnancy', 'Grand multipara (≥5 deliveries)', 'Prolonged labour (>12 hours)', 'Placenta praevia', 'Pre-eclampsia', 'Anaemia (Hb <9)', 'Age >35'].map((factor, idx) => (
+                      <label key={`pph-${idx}`} className="flex items-center gap-2">
+                        <input type="checkbox" name="pph_risk_factors" value={factor} checked={pphRiskFactors.includes(factor)} onChange={handleChange} />
+                        <span className="text-sm">{factor}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {pphRisk.score > 0 && (
+                    <div className={`mt-2 p-2 rounded text-sm ${pphRisk.risk === 'High' ? 'bg-red-200 text-red-800' : pphRisk.risk === 'Moderate' ? 'bg-yellow-200 text-yellow-800' : 'bg-green-200 text-green-800'}`}>
+                      PPH Risk Score: {pphRisk.score} - {pphRisk.risk} Risk
+                    </div>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Estimated Blood Loss (mL)</label>
+                    <input type="number" name="estimated_blood_loss" value={formData.estimated_blood_loss || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div className="flex items-center">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" name="placenta_complete" checked={formData.placenta_complete} onChange={handleChange} />
+                      <span>Placenta delivered completely</span>
                     </label>
                   </div>
-                  
-                  <div className="mt-3">
-                    <label className="block text-gray-700 mb-1">Estimated Blood Loss (mL)</label>
-                    <input
-                      type="number"
-                      name="estimated_blood_loss_ml"
-                      value={deliveryData.estimated_blood_loss_ml}
-                      onChange={handleChange}
-                      placeholder="e.g., 500"
-                      className="w-full px-3 py-2 border rounded-lg"
-                    />
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Perineal Tear</label>
+                    <select name="perineal_tear" value={formData.perineal_tear} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="None">None</option>
+                      <option value="1st degree">1st degree</option>
+                      <option value="2nd degree">2nd degree</option>
+                      <option value="3rd degree">3rd degree</option>
+                      <option value="4th degree">4th degree</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" name="episiotomy" checked={formData.episiotomy} onChange={handleChange} />
+                      <span>Episiotomy performed</span>
+                    </label>
                   </div>
                 </div>
                 
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className={`w-full py-3 rounded-lg text-white font-medium ${
-                    loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
-                  }`}
-                >
-                  {loading ? 'Saving...' : 'Record Delivery'}
-                </button>
-              </form>
-            </>
+                <div className="mt-3">
+                  <label className="block text-gray-700 font-medium mb-2">Maternal Complications (Check all that apply)</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['PPH', 'Eclampsia', 'Retained placenta', 'Uterine rupture', 'Sepsis', 'Obstructed labour', 'Cord prolapse', 'Maternal death'].map((comp, idx) => (
+                      <label key={`comp-${idx}`} className="flex items-center gap-2">
+                        <input type="checkbox" name="maternal_complications" value={comp} checked={formData.maternal_complications?.includes(comp)} onChange={handleChange} />
+                        <span className="text-sm">{comp}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Outcomes */}
+              <div className="mb-6 p-4 bg-green-50 rounded-lg">
+                <h3 className="text-lg font-bold text-green-800 mb-3">📊 Outcomes</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Maternal Outcome</label>
+                    <select name="maternal_outcome" value={formData.maternal_outcome} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="Alive">Alive - Well</option>
+                      <option value="Alive with complications">Alive with complications</option>
+                      <option value="Referred">Referred to another facility</option>
+                      <option value="Maternal death">Maternal death</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Baby Outcome</label>
+                    <select name="baby_outcome" value={formData.baby_outcome} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="Alive">Alive - Well</option>
+                      <option value="Alive with complications">Alive with complications</option>
+                      <option value="Referred to NICU">Referred to NICU</option>
+                      <option value="Stillbirth">Stillbirth</option>
+                      <option value="Neonatal death">Neonatal death</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-gray-700 font-medium mb-1">Referral To (if applicable)</label>
+                    <input type="text" name="referral_to" value={formData.referral_to} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., PCMH Freetown" />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Notes */}
+              <div className="mt-4">
+                <label className="block text-gray-700 font-medium mb-1">Clinical Notes</label>
+                <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="w-full px-3 py-2 border rounded-lg" placeholder="Enter any additional clinical notes..." />
+              </div>
+              
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+              >
+                {loading ? 'Saving...' : 'Save Delivery Record'}
+              </button>
+            </form>
+          )}
+          
+          {/* Delivery History */}
+          {selectedPatient && existingDeliveries.length > 0 && (
+            <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">Delivery History - {safeString(selectedPatient.full_name)}</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="p-2 text-left">Date</th>
+                      <th className="p-2 text-left">Mode</th>
+                      <th className="p-2 text-left">Baby Name</th>
+                      <th className="p-2 text-left">Weight</th>
+                      <th className="p-2 text-left">APGAR 5min</th>
+                      <th className="p-2 text-left">Maternal Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {existingDeliveries.map((delivery, idx) => (
+                      <tr key={`del-${delivery.delivery_id}-${idx}`} className="border-t">
+                        <td className="p-2">{new Date(delivery.delivery_date).toLocaleDateString()}</td>
+                        <td className="p-2">{delivery.mode_of_delivery}</td>
+                        <td className="p-2">{delivery.baby_name || '-'}</td>
+                        <td className="p-2">{delivery.birth_weight ? `${delivery.birth_weight} kg` : '-'}</td>
+                        <td className="p-2">{delivery.apgar_5min || '-'}</td>
+                        <td className="p-2">{delivery.maternal_outcome || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </div>
       </div>

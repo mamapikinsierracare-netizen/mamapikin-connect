@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 
 // Auth temporarily disabled for development
 // We will re-enable after Phase 2 is complete
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   // Allow all access for now
   return NextResponse.next()
 }
