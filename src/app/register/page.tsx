@@ -101,8 +101,20 @@ function saveToLocalStorage(patientData: PatientData) {
   const patients = existing ? JSON.parse(existing) : []
   patients.push(patientData)
   localStorage.setItem('offline_patients', JSON.stringify(patients))
-  console.log('💾 Saved to localStorage:', patientData.patient_id)
+  console.log('Saved to localStorage:', patientData.patient_id)
   return true
+}
+
+function markPatientAsSyncedInLocalStorage(patientId: string) {
+  const existing = localStorage.getItem('offline_patients')
+  if (existing) {
+    const patients = JSON.parse(existing)
+    const updated = patients.map((p: PatientData) =>
+      p.patient_id === patientId ? { ...p, synced_to_cloud: true } : p
+    )
+    localStorage.setItem('offline_patients', JSON.stringify(updated))
+    console.log('Marked patient', patientId, 'as synced in localStorage')
+  }
 }
 
 async function saveToSupabase(patientData: PatientData): Promise<{ success: boolean; error?: string }> {
@@ -127,16 +139,15 @@ async function saveToSupabase(patientData: PatientData): Promise<{ success: bool
     })
     
     if (response.ok) {
-      const result = await response.json()
-      console.log('☁️ Saved to Supabase!', result)
+      console.log('Saved to Supabase!')
       return { success: true }
     } else {
       const errorText = await response.text()
-      console.error('❌ Supabase error:', response.status, errorText)
+      console.error('Supabase error:', response.status, errorText)
       return { success: false, error: `${response.status}: ${errorText}` }
     }
   } catch (error) {
-    console.error('❌ Network error:', error)
+    console.error('Network error:', error)
     return { success: false, error: error instanceof Error ? error.message : 'Network error' }
   }
 }
@@ -299,42 +310,42 @@ export default function RegisterPage() {
         account_status: 'active'
       }
       
-      // Always save to localStorage first
       saveToLocalStorage(patientData)
       
       let cloudSaved = false
       let cloudError = ''
       
-      // Try to save to Supabase if online
       if (connectionStatus === 'online') {
         const result = await saveToSupabase(patientData)
         cloudSaved = result.success
         cloudError = result.error || ''
+        
+        if (cloudSaved) {
+          markPatientAsSyncedInLocalStorage(patientId)
+        }
       }
       
-      // Show appropriate feedback message
       if (cloudSaved) {
         setMessageType('success')
-        setMessage(`✅ PATIENT REGISTERED SUCCESSFULLY!\n\n🆔 ID: ${patientId}\n📅 Account Opening: ${formatDate(dates.openingDate)}\n📅 Account Closing: ${formatDate(dates.closingDate)}\n☁️ Data saved to CLOUD DATABASE\n💾 Local backup saved on device`)
+        setMessage(`✅ PATIENT REGISTERED SUCCESSFULLY!\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\nData saved to CLOUD DATABASE`)
       } else if (connectionStatus === 'online') {
         setMessageType('error')
-        setMessage(`❌ REGISTRATION FAILED - CLOUD SAVE ERROR\n\n🆔 ID: ${patientId}\n📅 Account Opening: ${formatDate(dates.openingDate)}\n📅 Account Closing: ${formatDate(dates.closingDate)}\n⚠️ Error: ${cloudError}\n\n💾 Data saved LOCALLY only. Please check Supabase connection and try again.`)
+        setMessage(`❌ REGISTRATION FAILED - CLOUD SAVE ERROR\n\nID: ${patientId}\nError: ${cloudError}\nData saved LOCALLY only.`)
       } else {
         setMessageType('warning')
-        setMessage(`📡 OFFLINE REGISTRATION SUCCESSFUL\n\n🆔 ID: ${patientId}\n📅 Account Opening: ${formatDate(dates.openingDate)}\n📅 Account Closing: ${formatDate(dates.closingDate)}\n💾 Data saved to LOCAL STORAGE only.\n🔄 Will sync to cloud automatically when connection is restored.`)
+        setMessage(`📡 OFFLINE REGISTRATION SUCCESSFUL\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\nData saved to LOCAL STORAGE only.`)
       }
       
       resetAndStartOver()
       
     } catch (error) {
       setMessageType('error')
-      setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
   }
 
-  // Render Step 1: Who is registering?
   if (step === 'who') {
     return (
       <>
@@ -346,9 +357,9 @@ export default function RegisterPage() {
               connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border border-red-500' :
               'bg-gray-100 text-gray-800'
             }`}>
-              {connectionStatus === 'online' ? '✅ ONLINE MODE - Data will save to cloud' : 
-               connectionStatus === 'offline' ? '📡 OFFLINE MODE - Data will save locally' : 
-               '⏳ Checking connection...'}
+              {connectionStatus === 'online' ? 'ONLINE MODE - Data will save to cloud' : 
+               connectionStatus === 'offline' ? 'OFFLINE MODE - Data will save locally' : 
+               'Checking connection...'}
             </div>
             
             <div className="text-center mb-6">
@@ -375,6 +386,7 @@ export default function RegisterPage() {
                 <button
                   onClick={() => {
                     setRegistrationType('emergency')
+                    setPatientType('emergency')
                     setStep('form')
                   }}
                   className="p-8 bg-yellow-50 border-2 border-yellow-200 rounded-xl hover:bg-yellow-100 hover:border-yellow-400 transition-all text-center"
@@ -391,7 +403,6 @@ export default function RegisterPage() {
     )
   }
 
-  // Render Step 2: Select Patient Type
   if (step === 'type') {
     return (
       <>
@@ -461,9 +472,9 @@ export default function RegisterPage() {
             connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border border-red-500' :
             'bg-gray-100 text-gray-800'
           }`}>
-            {connectionStatus === 'online' ? '✅ ONLINE MODE - Data will save to cloud' : 
-             connectionStatus === 'offline' ? '📡 OFFLINE MODE - Data will save locally' : 
-             '⏳ Checking connection...'}
+            {connectionStatus === 'online' ? 'ONLINE MODE - Data will save to cloud' : 
+             connectionStatus === 'offline' ? 'OFFLINE MODE - Data will save locally' : 
+             'Checking connection...'}
           </div>
           
           {message && (
@@ -480,22 +491,22 @@ export default function RegisterPage() {
           
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">
-              {isEmergency ? '🚨 Emergency Registration' : 
-               patientType === 'pregnant' ? '🤰 Register Pregnant Woman' :
-               patientType === 'breastfeeding' ? '🤱 Register Breastfeeding Mother' : '👶 Register Child Under 5'}
+              {isEmergency ? 'Emergency Registration' : 
+               patientType === 'pregnant' ? 'Register Pregnant Woman' :
+               patientType === 'breastfeeding' ? 'Register Breastfeeding Mother' : 'Register Child Under 5'}
             </h2>
-            {isEmergency && <p className="text-yellow-600 text-sm mb-4">⚠️ Complete full KYC within 36 hours</p>}
+            {isEmergency && <p className="text-yellow-600 text-sm mb-4">Complete full KYC within 36 hours</p>}
             
             {calculatedDates && (
               <div className={`mb-6 p-4 rounded-lg border-2 ${getStatusColor(daysRemaining)}`}>
                 <div className="flex justify-between items-center flex-wrap gap-4">
                   <div>
-                    <div className="text-sm font-medium">📅 Account Opening Date</div>
+                    <div className="text-sm font-medium">Account Opening Date</div>
                     <div className="text-lg font-bold">{formatDate(calculatedDates.openingDate)}</div>
                   </div>
                   <div className="text-2xl">→</div>
                   <div>
-                    <div className="text-sm font-medium">📅 Account Closing Date</div>
+                    <div className="text-sm font-medium">Account Closing Date</div>
                     <div className="text-lg font-bold">{formatDate(calculatedDates.closingDate)}</div>
                   </div>
                   <div className={`px-3 py-1 rounded-full text-sm font-bold ${
@@ -504,7 +515,7 @@ export default function RegisterPage() {
                     daysRemaining < 90 ? 'bg-yellow-200 text-yellow-800' :
                     'bg-green-200 text-green-800'
                   }`}>
-                    {daysRemaining < 0 ? '⚠️ ACCOUNT EXPIRED' : `${daysRemaining} days remaining`}
+                    {daysRemaining < 0 ? 'ACCOUNT EXPIRED' : `${daysRemaining} days remaining`}
                   </div>
                 </div>
               </div>
@@ -513,15 +524,24 @@ export default function RegisterPage() {
             <form onSubmit={handleSubmit}>
               {/* Demographics */}
               <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                <h3 className="text-lg font-bold text-gray-800 mb-3">📋 Personal Information</h3>
+                <h3 className="text-lg font-bold text-gray-800 mb-3">Personal Information</h3>
                 <div className="mb-4">
                   <label className="block text-gray-700 font-medium mb-1">Full Name <span className="text-red-500">*</span></label>
                   <input type="text" name="full_name" value={formData.full_name} onChange={handleChange} required className="w-full px-3 py-2 border rounded-lg" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className="block text-gray-700 font-medium mb-1">Date of Birth</label><input type="date" name="date_of_birth" value={formData.date_of_birth} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Phone Number</label><input type="tel" name="phone" value={formData.phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Village / Town</label><input type="text" name="village" value={formData.village} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Date of Birth</label>
+                    <input type="date" name="date_of_birth" value={formData.date_of_birth} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Phone Number</label>
+                    <input type="tel" name="phone" value={formData.phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Village / Town</label>
+                    <input type="text" name="village" value={formData.village} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
                   <div>
                     <label className="block text-gray-700 font-medium mb-1">District</label>
                     <select name="district" value={formData.district} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
@@ -536,81 +556,184 @@ export default function RegisterPage() {
                       <option value="Pujehun">Pujehun</option><option value="Moyamba">Moyamba</option>
                     </select>
                   </div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Blood Group</label><select name="blood_group" value={formData.blood_group} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg"><option value="">Select</option><option value="A+">A+</option><option value="A-">A-</option><option value="B+">B+</option><option value="B-">B-</option><option value="AB+">AB+</option><option value="AB-">AB-</option><option value="O+">O+</option><option value="O-">O-</option></select></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Allergies</label><input type="text" name="allergies" value={formData.allergies} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., Penicillin" /></div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Blood Group</label>
+                    <select name="blood_group" value={formData.blood_group} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="">Select</option><option value="A+">A+</option><option value="A-">A-</option>
+                      <option value="B+">B+</option><option value="B-">B-</option>
+                      <option value="AB+">AB+</option><option value="AB-">AB-</option>
+                      <option value="O+">O+</option><option value="O-">O-</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Allergies</label>
+                    <input type="text" name="allergies" value={formData.allergies} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., Penicillin" />
+                  </div>
                 </div>
               </div>
               
               {/* Family Information */}
               <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-                <h3 className="text-lg font-bold text-blue-800 mb-3">👨‍👩‍👧‍👦 Family / Support System</h3>
+                <h3 className="text-lg font-bold text-blue-800 mb-3">Family / Support System</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className="block text-gray-700 font-medium mb-1">Husband/Partner Name</label><input type="text" name="husband_name" value={formData.husband_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Husband/Partner Phone</label><input type="tel" name="husband_phone" value={formData.husband_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Husband/Partner Occupation</label><input type="text" name="husband_occupation" value={formData.husband_occupation} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Father's Name</label><input type="text" name="father_name" value={formData.father_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Father's Phone</label><input type="tel" name="father_phone" value={formData.father_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Father's Location</label><input type="text" name="father_location" value={formData.father_location} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="Village/Town" /></div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Husband/Partner Name</label>
+                    <input type="text" name="husband_name" value={formData.husband_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Husband/Partner Phone</label>
+                    <input type="tel" name="husband_phone" value={formData.husband_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Husband/Partner Occupation</label>
+                    <input type="text" name="husband_occupation" value={formData.husband_occupation} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Father&apos;s Name</label>
+                    <input type="text" name="father_name" value={formData.father_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Father&apos;s Phone</label>
+                    <input type="tel" name="father_phone" value={formData.father_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Father&apos;s Location</label>
+                    <input type="text" name="father_location" value={formData.father_location} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="Village/Town" />
+                  </div>
                 </div>
               </div>
               
               {/* Next of Kin */}
               <div className="mb-6 p-4 bg-purple-50 rounded-lg">
-                <h3 className="text-lg font-bold text-purple-800 mb-3">📞 Next of Kin (Emergency Contact)</h3>
+                <h3 className="text-lg font-bold text-purple-800 mb-3">Next of Kin (Emergency Contact)</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className="block text-gray-700 font-medium mb-1">Next of Kin Name</label><input type="text" name="next_of_kin_name" value={formData.next_of_kin_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Relationship</label><select name="next_of_kin_relationship" value={formData.next_of_kin_relationship} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg"><option value="">Select</option><option value="Mother">Mother</option><option value="Father">Father</option><option value="Sister">Sister</option><option value="Brother">Brother</option><option value="Husband">Husband</option><option value="Grandparent">Grandparent</option><option value="Aunt">Aunt</option><option value="Uncle">Uncle</option><option value="Other">Other</option></select></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Next of Kin Phone</label><input type="tel" name="next_of_kin_phone" value={formData.next_of_kin_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Next of Kin Address</label><input type="text" name="next_of_kin_address" value={formData.next_of_kin_address} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Primary Decision Maker</label><select name="primary_decision_maker" value={formData.primary_decision_maker} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg"><option value="">Select</option><option value="Self">Self</option><option value="Husband">Husband</option><option value="Father">Father</option><option value="Mother">Mother</option><option value="Elder">Family Elder</option><option value="Other">Other</option></select></div>
-                  <div><label className="block text-gray-700 font-medium mb-1">Family Support Level</label><select name="family_support_level" value={formData.family_support_level} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg"><option value="">Select</option><option value="High">High - Strong family support</option><option value="Moderate">Moderate - Some support available</option><option value="Low">Low - Limited support</option><option value="None">None - No family support</option></select></div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Next of Kin Name</label>
+                    <input type="text" name="next_of_kin_name" value={formData.next_of_kin_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Relationship</label>
+                    <select name="next_of_kin_relationship" value={formData.next_of_kin_relationship} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="">Select</option>
+                      <option value="Mother">Mother</option><option value="Father">Father</option>
+                      <option value="Sister">Sister</option><option value="Brother">Brother</option>
+                      <option value="Husband">Husband</option><option value="Grandparent">Grandparent</option>
+                      <option value="Aunt">Aunt</option><option value="Uncle">Uncle</option><option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Next of Kin Phone</label>
+                    <input type="tel" name="next_of_kin_phone" value={formData.next_of_kin_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Next of Kin Address</label>
+                    <input type="text" name="next_of_kin_address" value={formData.next_of_kin_address} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Primary Decision Maker</label>
+                    <select name="primary_decision_maker" value={formData.primary_decision_maker} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="">Select</option>
+                      <option value="Self">Self</option><option value="Husband">Husband</option>
+                      <option value="Father">Father</option><option value="Mother">Mother</option>
+                      <option value="Elder">Family Elder</option><option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-gray-700 font-medium mb-1">Family Support Level</label>
+                    <select name="family_support_level" value={formData.family_support_level} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
+                      <option value="">Select</option>
+                      <option value="High">High - Strong family support</option>
+                      <option value="Moderate">Moderate - Some support available</option>
+                      <option value="Low">Low - Limited support</option>
+                      <option value="None">None - No family support</option>
+                    </select>
+                  </div>
                 </div>
               </div>
               
               {(isEmergency || patientType === 'child') && (
                 <div className="mb-6 p-4 bg-yellow-50 rounded-lg">
-                  <h3 className="text-lg font-bold text-yellow-800 mb-3">👨‍👩‍👧 Guardian Information</h3>
+                  <h3 className="text-lg font-bold text-yellow-800 mb-3">Guardian Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className="block text-gray-700 font-medium mb-1">Guardian Name</label><input type="text" name="guardian_name" value={formData.guardian_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Guardian Phone</label><input type="tel" name="guardian_phone" value={formData.guardian_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Guardian Name</label>
+                      <input type="text" name="guardian_name" value={formData.guardian_name} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Guardian Phone</label>
+                      <input type="tel" name="guardian_phone" value={formData.guardian_phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
                   </div>
                 </div>
               )}
               
               {patientType === 'pregnant' && isStaff && (
                 <div className="mb-6 p-4 bg-pink-50 rounded-lg">
-                  <h3 className="text-lg font-bold text-pink-800 mb-3">🤰 Pregnancy Information</h3>
+                  <h3 className="text-lg font-bold text-pink-800 mb-3">Pregnancy Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className="block text-gray-700 font-medium mb-1">Expected Delivery Date (EDD)</label><input type="date" name="edd" value={formData.edd} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Gestational Age (weeks)</label><input type="number" name="gestational_age" value={formData.gestational_age} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Gravida (# of pregnancies)</label><input type="number" name="gravida" value={formData.gravida} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Para (# of deliveries)</label><input type="number" name="para" value={formData.para} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Expected Delivery Date (EDD)</label>
+                      <input type="date" name="edd" value={formData.edd} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Gestational Age (weeks)</label>
+                      <input type="number" name="gestational_age" value={formData.gestational_age} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Gravida (# of pregnancies)</label>
+                      <input type="number" name="gravida" value={formData.gravida} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Para (# of deliveries)</label>
+                      <input type="number" name="para" value={formData.para} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
                   </div>
                 </div>
               )}
               
               {patientType === 'breastfeeding' && isStaff && (
                 <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-                  <h3 className="text-lg font-bold text-blue-800 mb-3">🤱 Postnatal Information</h3>
+                  <h3 className="text-lg font-bold text-blue-800 mb-3">Postnatal Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className="block text-gray-700 font-medium mb-1">Last Delivery Date</label><input type="date" name="last_delivery_date" value={formData.last_delivery_date} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Baby Birth Weight (kg)</label><input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div className="flex items-center"><label className="flex items-center gap-2"><input type="checkbox" name="exclusive_breastfeeding" checked={formData.exclusive_breastfeeding} onChange={handleChange} /><span>Exclusive Breastfeeding</span></label></div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Last Delivery Date</label>
+                      <input type="date" name="last_delivery_date" value={formData.last_delivery_date} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Baby Birth Weight (kg)</label>
+                      <input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div className="flex items-center">
+                      <label className="flex items-center gap-2">
+                        <input type="checkbox" name="exclusive_breastfeeding" checked={formData.exclusive_breastfeeding} onChange={handleChange} />
+                        <span>Exclusive Breastfeeding</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               )}
               
               {patientType === 'child' && isStaff && (
                 <div className="mb-6 p-4 bg-green-50 rounded-lg">
-                  <h3 className="text-lg font-bold text-green-800 mb-3">👶 Child Information</h3>
+                  <h3 className="text-lg font-bold text-green-800 mb-3">Child Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className="block text-gray-700 font-medium mb-1">Birth Weight (kg)</label><input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Birth Length (cm)</label><input type="number" step="0.1" name="birth_length" value={formData.birth_length} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Birth Weight (kg)</label>
+                      <input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Birth Length (cm)</label>
+                      <input type="number" step="0.1" name="birth_length" value={formData.birth_length} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                    </div>
                   </div>
                 </div>
               )}
               
-              <button type="submit" disabled={loading} className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}>
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+              >
                 {loading ? 'Registering...' : 'Register Patient'}
               </button>
             </form>

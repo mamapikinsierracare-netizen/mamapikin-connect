@@ -16,8 +16,33 @@ type PatientData = {
   guardian_name: string | null
   guardian_phone: string | null
   is_pregnant: boolean
+  is_breastfeeding: boolean
+  is_child_under_5: boolean
   registered_at: string
   synced_to_cloud: boolean
+  edd: string | null
+  gestational_age: number | null
+  gravida: number | null
+  para: number | null
+  birth_weight: number | null
+  birth_length: number | null
+  last_delivery_date: string | null
+  exclusive_breastfeeding: boolean
+  husband_name: string | null
+  husband_phone: string | null
+  husband_occupation: string | null
+  father_name: string | null
+  father_phone: string | null
+  father_location: string | null
+  next_of_kin_name: string | null
+  next_of_kin_relationship: string | null
+  next_of_kin_phone: string | null
+  next_of_kin_address: string | null
+  primary_decision_maker: string | null
+  family_support_level: string | null
+  account_opening_date: string
+  account_closing_date: string
+  account_status: string
 }
 
 // Check if Supabase is reachable
@@ -28,28 +53,66 @@ async function isSupabaseReachable(): Promise<boolean> {
   if (!supabaseUrl || !supabaseAnonKey) return false
   
   try {
-    const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+    const response = await fetch(`${supabaseUrl}/rest/v1/patients?limit=1`, {
       headers: {
         'apikey': supabaseAnonKey,
         'Authorization': `Bearer ${supabaseAnonKey}`
       }
     })
-    return true
+    return response.ok
   } catch {
     return false
   }
 }
 
-// Sync a single patient to Supabase
-async function syncPatientToSupabase(patientData: PatientData): Promise<boolean> {
+// Check if patient already exists in Supabase (by patient_id)
+async function patientExistsInCloud(patientId: string): Promise<{ exists: boolean; id?: number }> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
-  if (!supabaseUrl || !supabaseAnonKey) return false
+  if (!supabaseUrl || !supabaseAnonKey) return { exists: false }
   
   try {
-    // Remove id field if exists (let Supabase auto-generate)
-    const { id, ...dataWithoutId } = patientData as any
+    const response = await fetch(`${supabaseUrl}/rest/v1/patients?patient_id=eq.${patientId}&select=id,patient_id`, {
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`
+      }
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      if (data && data.length > 0) {
+        return { exists: true, id: data[0].id }
+      }
+    }
+    return { exists: false }
+  } catch (error) {
+    console.error('Error checking patient existence:', error)
+    return { exists: false }
+  }
+}
+
+// Sync a single patient to Supabase (only if not exists)
+async function syncPatientToSupabase(patientData: PatientData): Promise<{ success: boolean; alreadyExists: boolean; error?: string }> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return { success: false, alreadyExists: false, error: 'Missing Supabase credentials' }
+  }
+  
+  // FIRST: Check if patient already exists in cloud
+  const { exists, id } = await patientExistsInCloud(patientData.patient_id)
+  
+  if (exists) {
+    console.log(`✅ Patient ${patientData.patient_id} already exists in cloud. Marking as synced.`)
+    return { success: true, alreadyExists: true }
+  }
+  
+  // If not exists, proceed with insert
+  try {
+    const { id: _, ...dataWithoutId } = patientData as any
     
     const response = await fetch(`${supabaseUrl}/rest/v1/patients`, {
       method: 'POST',
@@ -62,10 +125,17 @@ async function syncPatientToSupabase(patientData: PatientData): Promise<boolean>
       body: JSON.stringify(dataWithoutId)
     })
     
-    return response.ok
+    if (response.ok) {
+      console.log(`✅ Patient ${patientData.patient_id} synced to cloud!`)
+      return { success: true, alreadyExists: false }
+    } else {
+      const errorText = await response.text()
+      console.error(`❌ Sync error for ${patientData.patient_id}:`, response.status, errorText)
+      return { success: false, alreadyExists: false, error: `${response.status}: ${errorText}` }
+    }
   } catch (error) {
-    console.error('Sync error:', error)
-    return false
+    console.error(`❌ Network error for ${patientData.patient_id}:`, error)
+    return { success: false, alreadyExists: false, error: error instanceof Error ? error.message : 'Network error' }
   }
 }
 
@@ -74,16 +144,16 @@ export default function SyncPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isOnline, setIsOnline] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
-  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, success: 0, failed: 0 })
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, success: 0, failed: 0, alreadyExists: 0 })
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('info')
 
-  // Load pending patients from localStorage
+  // Load pending patients from localStorage (only those not synced)
   const loadPendingPatients = () => {
     const existing = localStorage.getItem('offline_patients')
     if (existing) {
       const allPatients = JSON.parse(existing)
-      // Only show patients that are NOT synced to cloud
+      // Show patients that are NOT synced to cloud
       const unsynced = allPatients.filter((p: PatientData) => !p.synced_to_cloud)
       setPendingPatients(unsynced)
     } else {
@@ -101,10 +171,7 @@ export default function SyncPage() {
     
     checkAndLoad()
     
-    // Check every 10 seconds
     const interval = setInterval(checkAndLoad, 10000)
-    
-    // Also listen to online/offline events
     window.addEventListener('online', () => checkAndLoad())
     window.addEventListener('offline', () => setIsOnline(false))
     
@@ -118,10 +185,8 @@ export default function SyncPage() {
   // Select or deselect all patients
   const toggleSelectAll = () => {
     if (selectedIds.size === pendingPatients.length && pendingPatients.length > 0) {
-      // Deselect all
       setSelectedIds(new Set())
     } else {
-      // Select all
       setSelectedIds(new Set(pendingPatients.map(p => p.patient_id)))
     }
   }
@@ -172,21 +237,28 @@ export default function SyncPage() {
     await performSync(pendingPatients)
   }
 
-  // Perform the actual sync operation
+  // Perform the actual sync operation with duplicate detection
   const performSync = async (patients: PatientData[]) => {
     setIsSyncing(true)
     setMessage('')
-    setSyncProgress({ current: 0, total: patients.length, success: 0, failed: 0 })
+    setSyncProgress({ current: 0, total: patients.length, success: 0, failed: 0, alreadyExists: 0 })
     
     let successCount = 0
     let failCount = 0
+    let alreadyExistsCount = 0
     
     for (let i = 0; i < patients.length; i++) {
       const patient = patients[i]
-      const success = await syncPatientToSupabase(patient)
+      const result = await syncPatientToSupabase(patient)
       
-      if (success) {
-        successCount++
+      if (result.success) {
+        if (result.alreadyExists) {
+          alreadyExistsCount++
+          console.log(`📌 Patient ${patient.patient_id} already exists in cloud - marking as synced`)
+        } else {
+          successCount++
+        }
+        
         // Update localStorage: mark this patient as synced
         const all = JSON.parse(localStorage.getItem('offline_patients') || '[]')
         const updated = all.map((p: PatientData) =>
@@ -195,13 +267,15 @@ export default function SyncPage() {
         localStorage.setItem('offline_patients', JSON.stringify(updated))
       } else {
         failCount++
+        console.error(`❌ Failed to sync ${patient.patient_id}: ${result.error}`)
       }
       
       setSyncProgress({
         current: i + 1,
         total: patients.length,
         success: successCount,
-        failed: failCount
+        failed: failCount,
+        alreadyExists: alreadyExistsCount
       })
     }
     
@@ -209,23 +283,31 @@ export default function SyncPage() {
     loadPendingPatients()
     setSelectedIds(new Set())
     
-    if (successCount > 0 && failCount === 0) {
-      setMessage(`✅ Successfully synced ${successCount} patient(s) to the cloud!`)
-      setMessageType('success')
-    } else if (successCount > 0 && failCount > 0) {
-      setMessage(`⚠️ Synced ${successCount} successfully, ${failCount} failed. Please try again for failed ones.`)
-      setMessageType('warning')
+    // Build success message
+    let messageText = ''
+    if (successCount > 0 && alreadyExistsCount > 0 && failCount === 0) {
+      messageText = `✅ Synced ${successCount} new patient(s). 📌 ${alreadyExistsCount} patient(s) already existed in cloud and were marked as synced.`
+    } else if (successCount > 0 && failCount === 0 && alreadyExistsCount === 0) {
+      messageText = `✅ Successfully synced ${successCount} patient(s) to the cloud!`
+    } else if (successCount > 0 && alreadyExistsCount > 0 && failCount > 0) {
+      messageText = `⚠️ Synced ${successCount} new, ${alreadyExistsCount} already existed, ${failCount} failed. Please try again for failed ones.`
+    } else if (alreadyExistsCount > 0 && successCount === 0 && failCount === 0) {
+      messageText = `📌 ${alreadyExistsCount} patient(s) already existed in cloud. They have been removed from sync queue.`
+    } else if (failCount > 0 && successCount === 0 && alreadyExistsCount === 0) {
+      messageText = `❌ Failed to sync ${failCount} patient(s). Check your connection and try again.`
     } else {
-      setMessage(`❌ Failed to sync ${failCount} patient(s). Check your connection and try again.`)
-      setMessageType('error')
+      messageText = `✅ Sync complete: ${successCount} new, ${alreadyExistsCount} already existed, ${failCount} failed.`
     }
+    
+    setMessage(messageText)
+    setMessageType(successCount > 0 || alreadyExistsCount > 0 ? 'success' : 'error')
     
     setIsSyncing(false)
     
-    // Clear progress after 3 seconds
+    // Clear progress after 5 seconds
     setTimeout(() => {
-      setSyncProgress({ current: 0, total: 0, success: 0, failed: 0 })
-    }, 3000)
+      setSyncProgress({ current: 0, total: 0, success: 0, failed: 0, alreadyExists: 0 })
+    }, 5000)
   }
 
   // Format date for display
@@ -245,6 +327,7 @@ export default function SyncPage() {
             <div className="mb-6">
               <h1 className="text-2xl font-bold text-green-700">Sync Offline Patients</h1>
               <p className="text-gray-600">Synchronize pending patient records to the cloud database</p>
+              <p className="text-sm text-blue-600 mt-1">⚠️ Duplicate detection: System will check if patient already exists before syncing</p>
             </div>
 
             {/* Online/Offline Status */}
@@ -252,7 +335,7 @@ export default function SyncPage() {
               <div className="flex items-center gap-2">
                 <span className="text-xl">{isOnline ? '✅' : '❌'}</span>
                 <span className="font-medium">
-                  {isOnline ? 'Online - Ready to sync' : 'Offline - Connect to internet to sync'}
+                  {isOnline ? 'Online - Ready to sync (duplicate detection active)' : 'Offline - Connect to internet to sync'}
                 </span>
               </div>
             </div>
@@ -260,9 +343,11 @@ export default function SyncPage() {
             {/* Sync Progress Bar */}
             {syncProgress.total > 0 && (
               <div className="mb-4 p-3 bg-blue-100 rounded-lg">
-                <div className="flex justify-between text-sm mb-1">
-                  <span>Syncing: {syncProgress.current} / {syncProgress.total}</span>
-                  <span>✅ Success: {syncProgress.success} | ❌ Failed: {syncProgress.failed}</span>
+                <div className="flex justify-between text-sm mb-1 flex-wrap gap-2">
+                  <span>📊 Syncing: {syncProgress.current} / {syncProgress.total}</span>
+                  <span>✅ New: {syncProgress.success}</span>
+                  <span>📌 Already existed: {syncProgress.alreadyExists}</span>
+                  <span>❌ Failed: {syncProgress.failed}</span>
                 </div>
                 <div className="w-full bg-gray-300 rounded-full h-2">
                   <div 
@@ -316,7 +401,7 @@ export default function SyncPage() {
               <div className="text-center py-12 text-gray-500">
                 <div className="text-5xl mb-3">📭</div>
                 <p className="text-lg">No pending patients to sync</p>
-                <p className="text-sm">All patient records are already in the cloud.</p>
+                <p className="text-sm">All patient records are already in the cloud or nothing to sync.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -371,7 +456,8 @@ export default function SyncPage() {
 
             {/* Footer Info */}
             <div className="mt-4 text-sm text-gray-500 text-center">
-              💾 Patients are stored locally until synced. Sync when online to backup to cloud.
+              <p>💾 Patients are stored locally until synced. Sync when online to backup to cloud.</p>
+              <p className="text-xs text-blue-600 mt-1">🔍 Duplicate detection: System checks cloud before syncing to prevent duplicates.</p>
             </div>
           </div>
         </div>

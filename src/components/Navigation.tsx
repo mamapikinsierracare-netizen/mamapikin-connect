@@ -6,34 +6,47 @@ import { useEffect, useState } from 'react'
 import { getCurrentUser } from '@/lib/auth'
 import LogoutButton from './LogoutButton'
 
+type AuthUser = {
+  id: string
+  email?: string | null
+  user_metadata?: {
+    full_name?: string
+  }
+  role?: string
+}
+
 export default function Navigation() {
   const pathname = usePathname()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   
   const navItems = [
     { name: 'Home', path: '/', icon: '🏠' },
     { name: 'Register Patient', path: '/register', icon: '📝' },
+    { name: 'Patients', path: '/patients', icon: '🔍' },
     { name: 'Offline Patients', path: '/offline-patients', icon: '📱' },
     { name: 'Sync Queue', path: '/sync', icon: '🔄' },
     { name: 'Scheduler', path: '/scheduler', icon: '📅' },
     { name: 'ANC Visit', path: '/anc', icon: '🤰' },
     { name: 'PNC Visit', path: '/pnc', icon: '👩‍👧' },
     { name: 'Delivery', path: '/delivery', icon: '👶' },
-    { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },
     { name: 'Laboratory', path: '/lab', icon: '🔬' },
-    { name: 'Patient Portal', path: '/portal', icon: '👤' },
+    { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },
+    { name: 'User Management', path: '/admin/users', icon: '👥' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
   ]
   
   useEffect(() => {
     async function loadUser() {
-      const { user } = await getCurrentUser()
-      setUser(user)
+      const result = await getCurrentUser()
+      setUser(result.user)
       setLoading(false)
     }
     loadUser()
   }, [])
+  
+  const displayName = user?.user_metadata?.full_name || 
+                      (user?.email ? user.email.split('@')[0] : 'User')
   
   return (
     <nav className="bg-green-700 text-white shadow-lg">
@@ -67,7 +80,7 @@ export default function Navigation() {
             {!loading && user && (
               <div className="flex items-center gap-2 ml-4 pl-4 border-l border-green-500">
                 <span className="text-sm">
-                  👤 {user.email?.split('@')[0]}
+                  👤 {displayName}
                 </span>
                 <LogoutButton />
               </div>
