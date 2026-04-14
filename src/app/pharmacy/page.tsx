@@ -1,459 +1,326 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/auth'
 import Navigation from '@/components/Navigation'
 
-interface Patient {
+type Medicine = {
   id: string
-  full_name: string
-  phone: string
+  name: string
+  category: string
+  stock: number
+  unit: string
+  expiry_date: string
 }
 
-interface Medicine {
-  id: string
-  generic_name: string
-  brand_name: string
-  category: string
-  dosage_form: string
-  strength: string
+type Prescription = {
+  id?: number
+  prescription_id: string
+  patient_id: string
+  medicine_name: string
+  dosage: string
+  frequency: string
+  duration_days: number
+  quantity: number
+  instructions: string | null
+  status: string
+  prescribed_by: string
+  dispensed_by: string
+  dispensed_at: string
 }
 
 export default function PharmacyPage() {
-  // Patient search
   const [searchTerm, setSearchTerm] = useState('')
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
-  const [searching, setSearching] = useState(false)
-  
-  // Medicines
-  const [medicines, setMedicines] = useState<Medicine[]>([])
+  const [patients, setPatients] = useState<any[]>([])
+  const [selectedPatient, setSelectedPatient] = useState<any>(null)
   const [selectedMedicine, setSelectedMedicine] = useState('')
-  const [inventory, setInventory] = useState<any>(null)
-  
-  // Prescription form
-  const [prescription, setPrescription] = useState({
-    dosage: '',
-    frequency: '',
-    duration_days: '',
-    quantity: '',
-    instructions: ''
-  })
-  
+  const [dosage, setDosage] = useState('')
+  const [frequency, setFrequency] = useState('')
+  const [duration, setDuration] = useState(7)
+  const [quantity, setQuantity] = useState(1)
+  const [instructions, setInstructions] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('success')
-  const [prescriptions, setPrescriptions] = useState<any[]>([])
 
-  // Load medicines on page load
+  const medicines: Medicine[] = [
+    { id: '1', name: 'Paracetamol 500mg', category: 'Analgesic', stock: 150, unit: 'tablet', expiry_date: '2026-12-31' },
+    { id: '2', name: 'Amoxicillin 500mg', category: 'Antibiotic', stock: 80, unit: 'capsule', expiry_date: '2026-10-15' },
+    { id: '3', name: 'Iron/Folic Acid', category: 'Antenatal', stock: 200, unit: 'tablet', expiry_date: '2027-01-20' },
+    { id: '4', name: 'Artemether-Lumefantrine', category: 'Antimalarial', stock: 120, unit: 'tablet', expiry_date: '2026-09-30' },
+    { id: '5', name: 'ORS', category: 'Rehydration', stock: 300, unit: 'sachet', expiry_date: '2027-03-15' },
+    { id: '6', name: 'Zinc 20mg', category: 'Supplement', stock: 180, unit: 'tablet', expiry_date: '2026-11-01' },
+    { id: '7', name: 'Magnesium Sulfate', category: 'Anticonvulsant', stock: 50, unit: 'ampoule', expiry_date: '2026-08-30' },
+    { id: '8', name: 'Oxytocin', category: 'Oxytocic', stock: 40, unit: 'ampoule', expiry_date: '2026-07-15' },
+  ]
+
   useEffect(() => {
-    loadMedicines()
+    // Load patients from localStorage
+    const loadPatients = () => {
+      const offlinePatients = localStorage.getItem('offline_patients')
+      if (offlinePatients) {
+        setPatients(JSON.parse(offlinePatients))
+      }
+    }
+    loadPatients()
   }, [])
 
-  async function loadMedicines() {
-    const { data, error } = await supabase
-      .from('medicines')
-      .select('*')
-      .order('generic_name')
-    
-    if (!error && data) {
-      setMedicines(data)
-    }
-  }
+  const filteredPatients = patients.filter(p =>
+    p.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.patient_id?.toLowerCase().includes(searchTerm.toLowerCase())
+  )
 
-  async function loadInventory(medicineId: string) {
-    const { data, error } = await supabase
-      .from('inventory')
-      .select('*')
-      .eq('medicine_id', medicineId)
-      .eq('status', 'Active')
-      .gt('current_stock', 0)
-      .order('expiry_date')
-    
-    if (!error && data && data.length > 0) {
-      setInventory(data[0])
-    } else {
-      setInventory(null)
-    }
-  }
-
-  async function loadPatientPrescriptions(patientId: string) {
-    const { data, error } = await supabase
-      .from('prescriptions')
-      .select(`
-        *,
-        medicines (generic_name, strength)
-      `)
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false })
-    
-    if (!error && data) {
-      setPrescriptions(data)
-    }
-  }
-
-  async function searchPatients() {
-    if (searchTerm.length < 2) return
-    
-    setSearching(true)
-    const { data, error } = await supabase
-      .from('patients')
-      .select('id, full_name, phone')
-      .ilike('full_name', `%${searchTerm}%`)
-      .limit(10)
-    
-    if (!error && data) {
-      setPatients(data)
-    }
-    setSearching(false)
-  }
-
-  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setSearchTerm(e.target.value)
-    if (e.target.value.length >= 2) {
-      searchPatients()
-    } else {
-      setPatients([])
-    }
-  }
-
-  async function selectPatient(patient: Patient) {
-    setSelectedPatient(patient)
-    setSearchTerm('')
-    setPatients([])
-    await loadPatientPrescriptions(patient.id)
-  }
-
-  async function handleMedicineChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const medicineId = e.target.value
-    setSelectedMedicine(medicineId)
-    if (medicineId) {
-      await loadInventory(medicineId)
-    }
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
     if (!selectedPatient) {
+      setMessage('❌ Please select a patient')
       setMessageType('error')
-      setMessage('Please select a patient first')
       return
     }
-    
     if (!selectedMedicine) {
+      setMessage('❌ Please select a medicine')
       setMessageType('error')
-      setMessage('Please select a medicine')
       return
     }
-    
-    if (!inventory || inventory.current_stock < parseInt(prescription.quantity)) {
+    if (!dosage) {
+      setMessage('❌ Please enter dosage')
       setMessageType('error')
-      setMessage('❌ Insufficient stock! Available: ' + (inventory?.current_stock || 0))
       return
     }
-    
+
     setLoading(true)
     setMessage('')
-    
+
     try {
-      // Create prescription
-      const { data: prescriptionData, error: prescriptionError } = await supabase
-        .from('prescriptions')
-        .insert([{
-          patient_id: selectedPatient.id,
-          medicine_id: selectedMedicine,
-          dosage: prescription.dosage,
-          frequency: prescription.frequency,
-          duration_days: parseInt(prescription.duration_days),
-          quantity: parseInt(prescription.quantity),
-          instructions: prescription.instructions || null,
-          status: 'Dispensed',
-          prescribed_by: 'nurse',
-          dispensed_by: 'pharmacist',
-          dispensed_at: new Date().toISOString()
-        }])
-        .select()
+      const prescriptionId = `RX-${selectedPatient.patient_id}-${Date.now()}`
+      const medicine = medicines.find(m => m.id === selectedMedicine)
       
-      if (prescriptionError) throw prescriptionError
-      
-      // Update inventory
-      const newStock = inventory.current_stock - parseInt(prescription.quantity)
-      await supabase
-        .from('inventory')
-        .update({ current_stock: newStock, updated_at: new Date().toISOString() })
-        .eq('id', inventory.id)
-      
-      // Log transaction
-      await supabase
-        .from('stock_transactions')
-        .insert([{
-          inventory_id: inventory.id,
-          transaction_type: 'Dispensed',
-          quantity_change: -parseInt(prescription.quantity),
-          previous_stock: inventory.current_stock,
-          new_stock: newStock,
-          performed_by: 'pharmacist',
-          prescription_id: prescriptionData?.[0]?.id
-        }])
-      
+      const prescription: Prescription = {
+        prescription_id: prescriptionId,
+        patient_id: selectedPatient.patient_id,
+        medicine_name: medicine?.name || selectedMedicine,
+        dosage: dosage,
+        frequency: frequency,
+        duration_days: duration,
+        quantity: quantity,
+        instructions: instructions || null,
+        status: 'dispensed',
+        prescribed_by: 'Nurse',
+        dispensed_by: 'Nurse',
+        dispensed_at: new Date().toISOString()
+      }
+
+      // Save to localStorage
+      const existing = localStorage.getItem('prescriptions')
+      const prescriptions = existing ? JSON.parse(existing) : []
+      prescriptions.push(prescription)
+      localStorage.setItem('prescriptions', JSON.stringify(prescriptions))
+
       setMessageType('success')
-      setMessage(`✅ Prescription dispensed! Remaining stock: ${newStock}`)
+      setMessage(`✅ Prescription dispensed to ${selectedPatient.full_name}: ${medicine?.name} ${dosage} ${frequency}`)
       
       // Reset form
-      setPrescription({ dosage: '', frequency: '', duration_days: '', quantity: '', instructions: '' })
       setSelectedMedicine('')
-      setInventory(null)
-      
-      // Reload prescriptions
-      await loadPatientPrescriptions(selectedPatient.id)
-      
-      // Check low stock alert
-      if (newStock <= (inventory.reorder_level || 5)) {
-        setMessageType('warning')
-        setMessage(`⚠️ Low stock alert! Only ${newStock} remaining. Please reorder.`)
-      }
-      
-    } catch (err: any) {
+      setDosage('')
+      setFrequency('')
+      setDuration(7)
+      setQuantity(1)
+      setInstructions('')
+      setSelectedPatient(null)
+      setSearchTerm('')
+
+    } catch (error) {
       setMessageType('error')
-      setMessage(`❌ Error: ${err.message}`)
+      setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
   }
 
-  function handlePrescriptionChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
-    const { name, value } = e.target
-    setPrescription(prev => ({ ...prev, [name]: value }))
-    
-    // Auto-calculate quantity if dosage, frequency, duration provided
-    if (name === 'dosage' || name === 'frequency' || name === 'duration_days') {
-      // Simple calculation: if frequency is "daily" and duration is days, quantity = duration
-      // This is a placeholder for more complex logic
-    }
-  }
-
-  // Get stock alert color
-  function getStockColor(stock: number, reorderLevel: number): string {
-    if (stock <= 0) return 'text-red-600 font-bold'
-    if (stock <= reorderLevel) return 'text-orange-600 font-bold'
-    return 'text-green-600'
-  }
+  const selectedMedicineData = medicines.find(m => m.id === selectedMedicine)
 
   return (
     <>
       <Navigation />
       <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-5xl mx-auto px-4">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-green-700">MamaPikin Connect</h1>
-            <p className="text-gray-600">Pharmacy - Prescriptions & Inventory</p>
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="text-center mb-6">
+            <h1 className="text-3xl font-bold text-green-700">Pharmacy</h1>
+            <p className="text-gray-600">Dispense medications and manage prescriptions</p>
           </div>
-          
-          {/* Message */}
+
           {message && (
-            <div className={`mb-6 p-4 rounded-lg ${
-              messageType === 'success' ? 'bg-green-100 text-green-700' :
-              messageType === 'warning' ? 'bg-orange-100 text-orange-700' :
-              'bg-red-100 text-red-700'
+            <div className={`mb-4 p-3 rounded-lg ${
+              messageType === 'success' ? 'bg-green-100 text-green-700 border border-green-400' : 
+              'bg-red-100 text-red-700 border border-red-400'
             }`}>
               {message}
             </div>
           )}
-          
+
+          {/* Medicine Stock Summary */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">📦 Medicine Stock Summary</h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="p-2 text-left">Medicine</th>
+                    <th className="p-2 text-left">Category</th>
+                    <th className="p-2 text-center">Stock</th>
+                    <th className="p-2 text-left">Expiry</th>
+                  </tr>
+                  </thead>
+                  <tbody>
+                    {medicines.map(med => (
+                      <tr key={med.id} className="border-t">
+                        <td className="p-2">{med.name}</td>
+                        <td className="p-2 text-sm text-gray-500">{med.category}</td>
+                        <td className="p-2 text-center">
+                          <span className={med.stock < 20 ? 'text-red-600 font-bold' : 'text-green-600'}>
+                            {med.stock} {med.unit}s
+                          </span>
+                        </td>
+                        <td className="p-2 text-sm">{med.expiry_date}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           {/* Patient Search */}
-          {!selectedPatient ? (
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold mb-4">Step 1: Find Patient</h2>
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={handleSearchChange}
-                placeholder="Search by patient name..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              {searching && <p className="text-gray-500 mt-2">Searching...</p>}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">1. Select Patient</h2>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name or patient ID..."
+              className="w-full px-3 py-2 border rounded-lg mb-3"
+            />
+            {searchTerm && filteredPatients.length > 0 && (
+              <div className="border rounded-lg max-h-48 overflow-y-auto">
+                {filteredPatients.map(patient => (
+                  <div
+                    key={patient.patient_id}
+                    onClick={() => setSelectedPatient(patient)}
+                    className="p-2 hover:bg-gray-100 cursor-pointer border-b"
+                  >
+                    <div className="font-medium">{patient.full_name}</div>
+                    <div className="text-sm text-gray-500">ID: {patient.patient_id}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {selectedPatient && (
+              <div className="mt-3 p-3 bg-green-50 rounded-lg">
+                <div className="font-medium">Selected: {selectedPatient.full_name}</div>
+                <div className="text-sm text-gray-500">ID: {selectedPatient.patient_id}</div>
+                <button onClick={() => setSelectedPatient(null)} className="text-red-600 text-sm mt-1">Change</button>
+              </div>
+            )}
+          </div>
+
+          {/* Prescription Form */}
+          {selectedPatient && (
+            <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-xl font-bold text-gray-800 mb-4">2. Dispense Medication</h2>
               
-              {patients.length > 0 && (
-                <div className="mt-4 border rounded-lg overflow-hidden">
-                  {patients.map(patient => (
-                    <div
-                      key={patient.id}
-                      onClick={() => selectPatient(patient)}
-                      className="p-3 border-b hover:bg-gray-50 cursor-pointer"
-                    >
-                      <p className="font-medium">{patient.full_name}</p>
-                      <p className="text-sm text-gray-500">ID: {patient.id} | Phone: {patient.phone || 'N/A'}</p>
-                    </div>
+              <div className="mb-4">
+                <label className="block text-gray-700 font-medium mb-1">Select Medicine</label>
+                <select
+                  value={selectedMedicine}
+                  onChange={(e) => setSelectedMedicine(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                  required
+                >
+                  <option value="">-- Select a medicine --</option>
+                  {medicines.map(med => (
+                    <option key={med.id} value={med.id}>
+                      {med.name} - Stock: {med.stock} {med.unit}s
+                    </option>
                   ))}
+                </select>
+              </div>
+
+              {selectedMedicineData && selectedMedicineData.stock < 20 && (
+                <div className="mb-4 p-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm">
+                  ⚠️ Low stock alert: Only {selectedMedicineData.stock} {selectedMedicineData.unit}s remaining
                 </div>
               )}
-            </div>
-          ) : (
-            <>
-              {/* Selected Patient */}
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="text-sm text-green-600">Selected Patient</p>
-                    <p className="font-bold text-lg">{selectedPatient.full_name}</p>
-                    <p className="text-sm">ID: {selectedPatient.id}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setSelectedPatient(null)
-                      setPrescriptions([])
-                    }}
-                    className="text-green-600 hover:text-green-800"
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-gray-700 font-medium mb-1">Dosage</label>
+                  <input
+                    type="text"
+                    value={dosage}
+                    onChange={(e) => setDosage(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder="e.g., 500mg"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-700 font-medium mb-1">Frequency</label>
+                  <select
+                    value={frequency}
+                    onChange={(e) => setFrequency(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    required
                   >
-                    Change Patient
-                  </button>
+                    <option value="">Select frequency</option>
+                    <option value="Once daily">Once daily</option>
+                    <option value="Twice daily">Twice daily</option>
+                    <option value="Three times daily">Three times daily</option>
+                    <option value="Four times daily">Four times daily</option>
+                    <option value="Every 6 hours">Every 6 hours</option>
+                    <option value="Every 8 hours">Every 8 hours</option>
+                    <option value="As needed">As needed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-gray-700 font-medium mb-1">Duration (days)</label>
+                  <input
+                    type="number"
+                    value={duration}
+                    onChange={(e) => setDuration(parseInt(e.target.value))}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    min="1"
+                    max="90"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-700 font-medium mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    value={quantity}
+                    onChange={(e) => setQuantity(parseInt(e.target.value))}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    min="1"
+                  />
                 </div>
               </div>
-              
-              {/* Prescription History */}
-              {prescriptions.length > 0 && (
-                <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                  <h3 className="text-lg font-bold text-gray-800 mb-3">📋 Prescription History</h3>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {prescriptions.map((rx: any) => (
-                      <div key={rx.id} className="p-2 bg-gray-50 rounded flex justify-between items-center">
-                        <div>
-                          <p className="font-medium">{rx.medicines?.generic_name} {rx.medicines?.strength}</p>
-                          <p className="text-sm text-gray-500">{rx.dosage} - {rx.frequency} for {rx.duration_days} days</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs text-gray-400">{new Date(rx.created_at).toLocaleDateString()}</p>
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                            {rx.status}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Prescription Form */}
-              <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-xl font-bold mb-4">Step 2: New Prescription</h2>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <label className="block text-gray-700 mb-1">Select Medicine *</label>
-                    <select
-                      value={selectedMedicine}
-                      onChange={handleMedicineChange}
-                      required
-                      className="w-full px-3 py-2 border rounded-lg"
-                    >
-                      <option value="">Choose medicine...</option>
-                      {medicines.map(med => (
-                        <option key={med.id} value={med.id}>
-                          {med.generic_name} - {med.strength} ({med.dosage_form})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 mb-1">Available Stock</label>
-                    <div className="px-3 py-2 border rounded-lg bg-gray-50">
-                      {inventory ? (
-                        <span className={getStockColor(inventory.current_stock, inventory.reorder_level)}>
-                          {inventory.current_stock} units (Reorder at {inventory.reorder_level})
-                        </span>
-                      ) : (
-                        <span className="text-red-600">Out of stock or not found</span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 mb-1">Dosage *</label>
-                    <input
-                      type="text"
-                      name="dosage"
-                      value={prescription.dosage}
-                      onChange={handlePrescriptionChange}
-                      placeholder="e.g., 500mg"
-                      required
-                      className="w-full px-3 py-2 border rounded-lg"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 mb-1">Frequency *</label>
-                    <select
-                      name="frequency"
-                      value={prescription.frequency}
-                      onChange={handlePrescriptionChange}
-                      required
-                      className="w-full px-3 py-2 border rounded-lg"
-                    >
-                      <option value="">Select...</option>
-                      <option value="Once daily">Once daily</option>
-                      <option value="Twice daily">Twice daily (every 12 hours)</option>
-                      <option value="Three times daily">Three times daily (every 8 hours)</option>
-                      <option value="Four times daily">Four times daily (every 6 hours)</option>
-                      <option value="Every 4 hours">Every 4 hours</option>
-                      <option value="Every 6 hours">Every 6 hours</option>
-                      <option value="Every 8 hours">Every 8 hours</option>
-                      <option value="As needed">As needed (PRN)</option>
-                    </select>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 mb-1">Duration (days) *</label>
-                    <input
-                      type="number"
-                      name="duration_days"
-                      value={prescription.duration_days}
-                      onChange={handlePrescriptionChange}
-                      placeholder="e.g., 7"
-                      required
-                      className="w-full px-3 py-2 border rounded-lg"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 mb-1">Quantity *</label>
-                    <input
-                      type="number"
-                      name="quantity"
-                      value={prescription.quantity}
-                      onChange={handlePrescriptionChange}
-                      placeholder="Number of units"
-                      required
-                      className="w-full px-3 py-2 border rounded-lg"
-                    />
-                  </div>
-                  
-                  <div className="md:col-span-2">
-                    <label className="block text-gray-700 mb-1">Instructions (optional)</label>
-                    <textarea
-                      name="instructions"
-                      value={prescription.instructions}
-                      onChange={handlePrescriptionChange}
-                      placeholder="e.g., Take with food, avoid alcohol..."
-                      rows={2}
-                      className="w-full px-3 py-2 border rounded-lg"
-                    />
-                  </div>
-                </div>
-                
-                <button
-                  type="submit"
-                  disabled={loading || !inventory}
-                  className={`w-full py-3 rounded-lg text-white font-medium ${
-                    loading || !inventory ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
-                  }`}
-                >
-                  {loading ? 'Processing...' : 'Dispense Prescription'}
-                </button>
-              </form>
-            </>
+
+              <div className="mb-4">
+                <label className="block text-gray-700 font-medium mb-1">Instructions (Optional)</label>
+                <textarea
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-2 border rounded-lg"
+                  placeholder="e.g., Take with food, Avoid alcohol, etc."
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+              >
+                {loading ? 'Processing...' : 'Dispense Medication'}
+              </button>
+            </form>
           )}
         </div>
       </div>
