@@ -376,7 +376,6 @@ export default function RegisterPage() {
                   onClick={() => {
                     setRegistrationType('emergency')
                     setStep('form')
-                    setPatientType('emergency')
                   }}
                   className="p-8 bg-yellow-50 border-2 border-yellow-200 rounded-xl hover:bg-yellow-100 hover:border-yellow-400 transition-all text-center"
                 >
@@ -595,7 +594,7 @@ export default function RegisterPage() {
                   <h3 className="text-lg font-bold text-blue-800 mb-3">🤱 Postnatal Information</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className="block text-gray-700 font-medium mb-1">Last Delivery Date</label><input type="date" name="last_delivery_date" value={formData.last_delivery_date} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
-                    <div><label className="block text-gray-700 font-medium mb-1">Baby's Birth Weight (kg)</label><input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
+                    <div><label className="block text-gray-700 font-medium mb-1">Baby Birth Weight (kg)</label><input type="number" step="0.01" name="birth_weight" value={formData.birth_weight} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" /></div>
                     <div className="flex items-center"><label className="flex items-center gap-2"><input type="checkbox" name="exclusive_breastfeeding" checked={formData.exclusive_breastfeeding} onChange={handleChange} /><span>Exclusive Breastfeeding</span></label></div>
                   </div>
                 </div>
