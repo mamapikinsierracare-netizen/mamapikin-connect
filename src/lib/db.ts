@@ -198,7 +198,7 @@ export async function deleteOffline(tableName: string, id: string): Promise<void
   });
 }
 
-// Get all unsynced data from all tables
+// Get all unsynced data from all tables - FIXED: using filter instead of where().equals()
 export async function getUnsyncedData(): Promise<{
   patients: OfflinePatient[];
   anc_visits: OfflineANC[];
@@ -206,11 +206,12 @@ export async function getUnsyncedData(): Promise<{
   lab_requests: OfflineLabRequest[];
   deliveries: OfflineDelivery[];
 }> {
-  const patients = await db.patients.where('pending_sync').equals(true).toArray();
-  const anc_visits = await db.anc_visits.where('pending_sync').equals(true).toArray();
-  const prescriptions = await db.prescriptions.where('pending_sync').equals(true).toArray();
-  const lab_requests = await db.lab_requests.where('pending_sync').equals(true).toArray();
-  const deliveries = await db.deliveries.where('pending_sync').equals(true).toArray();
+  // Use filter instead of where().equals() to avoid TypeScript errors with boolean
+  const patients = await db.patients.filter(p => p.pending_sync === true).toArray();
+  const anc_visits = await db.anc_visits.filter(a => a.pending_sync === true).toArray();
+  const prescriptions = await db.prescriptions.filter(p => p.pending_sync === true).toArray();
+  const lab_requests = await db.lab_requests.filter(l => l.pending_sync === true).toArray();
+  const deliveries = await db.deliveries.filter(d => d.pending_sync === true).toArray();
   
   return { patients, anc_visits, prescriptions, lab_requests, deliveries };
 }
@@ -220,8 +221,13 @@ export async function markAsSynced(tableName: string, id: string): Promise<void>
   const dbTable = db[tableName as keyof MamaPikinDB] as Table;
   await dbTable.update(id, { synced: true, pending_sync: false });
   
-  // Remove from sync queue
-  await db.sync_queue.where('data.id').equals(id).delete();
+  // Remove from sync queue - FIXED: using filter and delete
+  const items = await db.sync_queue.filter(item => item.data?.id === id).toArray();
+  for (const item of items) {
+    if (item.id) {
+      await db.sync_queue.delete(item.id);
+    }
+  }
 }
 
 // Get all pending sync queue items
@@ -244,9 +250,9 @@ export async function getOfflinePatients(): Promise<OfflinePatient[]> {
   return await db.patients.toArray();
 }
 
-// Get offline patients by district
+// Get offline patients by district - FIXED: using filter
 export async function getOfflinePatientsByDistrict(district: string): Promise<OfflinePatient[]> {
-  return await db.patients.where('district').equals(district).toArray();
+  return await db.patients.filter(p => p.district === district).toArray();
 }
 
 // Get offline patient by ID
@@ -254,14 +260,14 @@ export async function getOfflinePatientById(id: string): Promise<OfflinePatient 
   return await db.patients.get(id);
 }
 
-// Get offline ANC visits for a patient
+// Get offline ANC visits for a patient - FIXED: using filter
 export async function getOfflineAncVisits(patientId: string): Promise<OfflineANC[]> {
-  return await db.anc_visits.where('patient_id').equals(patientId).toArray();
+  return await db.anc_visits.filter(a => a.patient_id === patientId).toArray();
 }
 
-// Get offline prescriptions for a patient
+// Get offline prescriptions for a patient - FIXED: using filter
 export async function getOfflinePrescriptions(patientId: string): Promise<OfflinePrescription[]> {
-  return await db.prescriptions.where('patient_id').equals(patientId).toArray();
+  return await db.prescriptions.filter(p => p.patient_id === patientId).toArray();
 }
 
 // Clear all offline data (use with caution)
