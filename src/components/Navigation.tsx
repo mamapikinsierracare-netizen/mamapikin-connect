@@ -16,15 +16,14 @@ export default function Navigation() {
     { name: 'Register Patient', path: '/register', icon: '📝' },
     { name: 'Offline Patients', path: '/offline-patients', icon: '📱' },
     { name: 'Sync Queue', path: '/sync', icon: '🔄' },
+    { name: 'Scheduler', path: '/scheduler', icon: '📅' },
     { name: 'ANC Visit', path: '/anc', icon: '🤰' },
     { name: 'PNC Visit', path: '/pnc', icon: '👩‍👧' },
     { name: 'Delivery', path: '/delivery', icon: '👶' },
     { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },
     { name: 'Laboratory', path: '/lab', icon: '🔬' },
     { name: 'Patient Portal', path: '/portal', icon: '👤' },
-    { name: 'Test DB', path: '/supabase-test', icon: '🔧' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
-    { name: 'Test Sync', path: '/test-sync', icon: '🔧' },
   ]
   
   useEffect(() => {
