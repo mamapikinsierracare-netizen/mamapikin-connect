@@ -156,8 +156,11 @@ async function getVaccineSchedule(): Promise<VaccineSchedule[]> {
   
   try {
     const response = await fetch(`${supabaseUrl}/rest/v1/vaccine_schedule?is_active=eq.true&order=due_age_weeks.nullslast,due_age_months.nullslast`, {
-      headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` }
-    })
+  headers: {
+    'apikey': supabaseAnonKey || '',
+    'Authorization': `Bearer ${supabaseAnonKey || ''}`
+  } as HeadersInit
+})
     if (response.ok) {
       return await response.json()
     }
