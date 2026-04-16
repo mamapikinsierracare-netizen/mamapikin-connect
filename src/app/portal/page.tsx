@@ -1,10 +1,10 @@
+// src/app/portal/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
 
 type Patient = {
-  id?: number
   patient_id: string
   full_name: string
   date_of_birth: string | null
@@ -13,10 +13,13 @@ type Patient = {
   district: string | null
   blood_group: string | null
   allergies: string | null
+  guardian_name: string | null
+  guardian_phone: string | null
   is_pregnant: boolean
   is_breastfeeding: boolean
   is_child_under_5: boolean
   edd: string | null
+  registered_at: string
   account_opening_date: string | null
   account_closing_date: string | null
   account_status: string
@@ -35,12 +38,10 @@ type AncVisit = {
 
 type PncVisit = {
   id: number
-  visit_number: number
   visit_type: string
   visit_date: string
   mother_weight: number | null
   baby_weight: number | null
-  epds_score: number | null
 }
 
 type Delivery = {
@@ -49,8 +50,6 @@ type Delivery = {
   mode_of_delivery: string
   baby_name: string | null
   birth_weight: number | null
-  maternal_outcome: string
-  baby_outcome: string
 }
 
 type Immunisation = {
@@ -60,65 +59,126 @@ type Immunisation = {
   administration_date: string
 }
 
+const getSupabaseUrl = () => process.env.NEXT_PUBLIC_SUPABASE_URL!
+const getSupabaseAnonKey = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+async function fetchPatient(patientId: string): Promise<Patient | null> {
+  try {
+    const response = await fetch(`${getSupabaseUrl()}/rest/v1/patients?patient_id=eq.${patientId}`, {
+      headers: { 'apikey': getSupabaseAnonKey(), 'Authorization': `Bearer ${getSupabaseAnonKey()}` }
+    })
+    if (response.ok) {
+      const data = await response.json()
+      if (data && data.length > 0) return data[0]
+    }
+  } catch (error) {
+    console.error('Fetch error:', error)
+  }
+  
+  // Try localStorage as fallback
+  const offlinePatients = localStorage.getItem('offline_patients')
+  if (offlinePatients) {
+    const patients: Patient[] = JSON.parse(offlinePatients)
+    const found = patients.find(p => p.patient_id === patientId)
+    if (found) return found
+  }
+  return null
+}
+
+async function fetchAncVisits(patientId: string): Promise<AncVisit[]> {
+  try {
+    const response = await fetch(`${getSupabaseUrl()}/rest/v1/anc_visits?patient_id=eq.${patientId}&order=visit_number.asc`, {
+      headers: { 'apikey': getSupabaseAnonKey(), 'Authorization': `Bearer ${getSupabaseAnonKey()}` }
+    })
+    if (response.ok) return await response.json()
+  } catch { /* ignore */ }
+  return []
+}
+
+async function fetchPncVisits(patientId: string): Promise<PncVisit[]> {
+  try {
+    const response = await fetch(`${getSupabaseUrl()}/rest/v1/pnc_visits?patient_id=eq.${patientId}&order=visit_date.desc`, {
+      headers: { 'apikey': getSupabaseAnonKey(), 'Authorization': `Bearer ${getSupabaseAnonKey()}` }
+    })
+    if (response.ok) return await response.json()
+  } catch { /* ignore */ }
+  return []
+}
+
+async function fetchDeliveries(patientId: string): Promise<Delivery[]> {
+  try {
+    const response = await fetch(`${getSupabaseUrl()}/rest/v1/deliveries?patient_id=eq.${patientId}&order=delivery_date.desc`, {
+      headers: { 'apikey': getSupabaseAnonKey(), 'Authorization': `Bearer ${getSupabaseAnonKey()}` }
+    })
+    if (response.ok) return await response.json()
+  } catch { /* ignore */ }
+  return []
+}
+
+async function fetchImmunisations(patientId: string): Promise<Immunisation[]> {
+  try {
+    const response = await fetch(`${getSupabaseUrl()}/rest/v1/immunisations?patient_id=eq.${patientId}&order=administration_date.desc`, {
+      headers: { 'apikey': getSupabaseAnonKey(), 'Authorization': `Bearer ${getSupabaseAnonKey()}` }
+    })
+    if (response.ok) return await response.json()
+  } catch { /* ignore */ }
+  return []
+}
+
+function formatDate(dateString: string | null): string {
+  if (!dateString) return 'N/A'
+  return new Date(dateString).toLocaleDateString()
+}
+
+function getDaysRemaining(closingDate: string | null): number | null {
+  if (!closingDate) return null
+  const today = new Date()
+  const closing = new Date(closingDate)
+  const diffTime = closing.getTime() - today.getTime()
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+}
+
 export default function PortalPage() {
-  const [patientData, setPatientData] = useState<Patient | null>(null)
+  const [patient, setPatient] = useState<Patient | null>(null)
   const [ancVisits, setAncVisits] = useState<AncVisit[]>([])
   const [pncVisits, setPncVisits] = useState<PncVisit[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [immunisations, setImmunisations] = useState<Immunisation[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [patientIdInput, setPatientIdInput] = useState('')
   const [searchedId, setSearchedId] = useState('')
+  const [emergencyToken, setEmergencyToken] = useState('')
+  const [tokenMessage, setTokenMessage] = useState('')
 
-  // Load patient data from localStorage when searchedId changes
   useEffect(() => {
     if (!searchedId) return
 
-    const loadData = async () => {
+    async function loadData() {
       setLoading(true)
       setError('')
       
-      try {
-        // Search in localStorage
-        const offlinePatients = localStorage.getItem('offline_patients')
-        let foundPatient: Patient | null = null
+      const patientData = await fetchPatient(searchedId)
+      
+      if (patientData) {
+        setPatient(patientData)
         
-        if (offlinePatients) {
-          const patients: Patient[] = JSON.parse(offlinePatients)
-          foundPatient = patients.find(p => p.patient_id === searchedId) || null
-        }
+        const [anc, pnc, deliveriesData, immunisationsData] = await Promise.all([
+          fetchAncVisits(searchedId),
+          fetchPncVisits(searchedId),
+          fetchDeliveries(searchedId),
+          fetchImmunisations(searchedId)
+        ])
         
-        if (foundPatient) {
-          setPatientData(foundPatient)
-          
-          // Load related records from localStorage
-          const ancKey = `anc_visits_${foundPatient.patient_id}`
-          const ancStored = localStorage.getItem(ancKey)
-          if (ancStored) setAncVisits(JSON.parse(ancStored))
-          
-          const pncKey = `pnc_visits_${foundPatient.patient_id}`
-          const pncStored = localStorage.getItem(pncKey)
-          if (pncStored) setPncVisits(JSON.parse(pncStored))
-          
-          const deliveryKey = `deliveries_${foundPatient.patient_id}`
-          const deliveryStored = localStorage.getItem(deliveryKey)
-          if (deliveryStored) setDeliveries(JSON.parse(deliveryStored))
-          
-          const immunisationKey = `immunisations_${foundPatient.patient_id}`
-          const immunisationStored = localStorage.getItem(immunisationKey)
-          if (immunisationStored) setImmunisations(JSON.parse(immunisationStored))
-          
-        } else {
-          setError('Patient not found. Please check the Patient ID.')
-          setPatientData(null)
-        }
-      } catch (err) {
-        setError('Error loading patient data')
-        console.error(err)
-      } finally {
-        setLoading(false)
+        setAncVisits(anc)
+        setPncVisits(pnc)
+        setDeliveries(deliveriesData)
+        setImmunisations(immunisationsData)
+      } else {
+        setError('Patient not found. Please check the Patient ID.')
+        setPatient(null)
       }
+      setLoading(false)
     }
     
     loadData()
@@ -131,18 +191,38 @@ export default function PortalPage() {
     }
   }
 
-  const getDaysRemaining = (closingDate: string | null) => {
-    if (!closingDate) return null
-    const today = new Date()
-    const closing = new Date(closingDate)
-    const diffTime = closing.getTime() - today.getTime()
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+  function generateEmergencyToken() {
+    const token = Math.floor(10000000 + Math.random() * 90000000).toString()
+    const expiry = new Date()
+    expiry.setHours(expiry.getHours() + 24)
+    setEmergencyToken(token)
+    setTokenMessage(`✅ Token: ${token}\nValid until: ${expiry.toLocaleString()}`)
+    
+    const tokenData = {
+      token,
+      patient_id: patient?.patient_id,
+      expiry: expiry.toISOString(),
+      created_at: new Date().toISOString()
+    }
+    const existing = localStorage.getItem('emergency_tokens')
+    const tokens = existing ? JSON.parse(existing) : []
+    tokens.push(tokenData)
+    localStorage.setItem('emergency_tokens', JSON.stringify(tokens))
+    
+    setTimeout(() => {
+      setEmergencyToken('')
+      setTokenMessage('')
+    }, 60000)
   }
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'N/A'
-    return new Date(dateString).toLocaleDateString()
+  function copyToken() {
+    navigator.clipboard.writeText(emergencyToken)
+    setTokenMessage(`✅ Token ${emergencyToken} copied!`)
+    setTimeout(() => setTokenMessage(''), 3000)
   }
+
+  const daysRemaining = patient?.account_closing_date ? getDaysRemaining(patient.account_closing_date) : null
+  const isExpired = daysRemaining !== null && daysRemaining < 0
 
   return (
     <>
@@ -172,10 +252,11 @@ export default function PortalPage() {
                 Search
               </button>
             </form>
+            <p className="text-xs text-gray-500 mt-2">Your Patient ID is on your MamaPikin Connect card</p>
           </div>
 
           {loading && (
-            <div className="text-center py-8">
+            <div className="bg-white rounded-lg shadow-md p-8 text-center">
               <div className="text-gray-500">Loading patient data...</div>
             </div>
           )}
@@ -186,95 +267,101 @@ export default function PortalPage() {
             </div>
           )}
 
-          {patientData && !loading && (
+          {patient && !loading && (
             <>
-              {/* Patient Information Card */}
-              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                <h2 className="text-xl font-bold text-green-700 mb-4">Patient Information</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Patient Info Card */}
+              <div className={`bg-white rounded-lg shadow-md p-6 mb-6 border-l-4 ${isExpired ? 'border-red-500' : 'border-green-500'}`}>
+                <div className="flex justify-between items-start flex-wrap gap-4">
                   <div>
-                    <div className="text-sm text-gray-500">Full Name</div>
-                    <div className="font-medium">{patientData.full_name}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500">Patient ID</div>
-                    <div className="font-mono text-sm">{patientData.patient_id}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500">Date of Birth</div>
-                    <div>{formatDate(patientData.date_of_birth)}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500">Blood Group</div>
-                    <div>{patientData.blood_group || 'Not recorded'}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500">Allergies</div>
-                    <div>{patientData.allergies || 'None recorded'}</div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-gray-500">Account Status</div>
-                    <div>
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        patientData.account_status === 'active' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {patientData.account_status || 'active'}
+                    <h2 className="text-xl font-bold text-gray-800">{patient.full_name}</h2>
+                    <p className="text-gray-500 font-mono text-sm">ID: {patient.patient_id}</p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+                        {patient.is_pregnant ? '🤰 Pregnant' : patient.is_breastfeeding ? '🤱 Breastfeeding' : patient.is_child_under_5 ? '👶 Child' : 'Patient'}
+                      </span>
+                      <span className={`px-2 py-1 rounded-full text-xs ${isExpired ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                        {isExpired ? 'Account Expired' : daysRemaining ? `${daysRemaining} days left` : 'Active'}
                       </span>
                     </div>
                   </div>
-                  {patientData.account_closing_date && (
-                    <div className="col-span-2">
-                      <div className="text-sm text-gray-500">Account Closing Date</div>
-                      <div className="font-medium">
-                        {formatDate(patientData.account_closing_date)}
-                        {getDaysRemaining(patientData.account_closing_date) !== null && (
-                          <span className={`ml-2 text-sm ${
-                            getDaysRemaining(patientData.account_closing_date)! < 0 
-                              ? 'text-red-600' 
-                              : getDaysRemaining(patientData.account_closing_date)! < 30 
-                              ? 'text-orange-600' 
-                              : 'text-green-600'
-                          }`}>
-                            ({getDaysRemaining(patientData.account_closing_date)! < 0 
-                              ? 'Expired' 
-                              : `${getDaysRemaining(patientData.account_closing_date)} days remaining`})
-                          </span>
-                        )}
-                      </div>
+                  <div className="text-right">
+                    <p className="text-sm text-gray-500">Registered: {formatDate(patient.registered_at)}</p>
+                    <p className="text-sm text-gray-500">Account closes: {formatDate(patient.account_closing_date)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Emergency Token Section */}
+              <div className="bg-yellow-50 rounded-lg shadow-md p-6 mb-6 border border-yellow-300">
+                <h3 className="text-lg font-bold text-yellow-800 mb-2">🚨 Emergency Access Token</h3>
+                <p className="text-sm text-yellow-700 mb-3">
+                  Generate a token to share your records with another facility in case of emergency. Valid for 24 hours.
+                </p>
+                {tokenMessage && (
+                  <div className="mb-3 p-3 bg-green-100 text-green-800 rounded-lg whitespace-pre-line">
+                    {tokenMessage}
+                  </div>
+                )}
+                {emergencyToken ? (
+                  <div className="flex gap-2">
+                    <div className="flex-1 p-3 bg-white border rounded-lg font-mono text-center text-2xl tracking-wider">
+                      {emergencyToken}
                     </div>
-                  )}
+                    <button onClick={copyToken} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                      Copy
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={generateEmergencyToken}
+                    className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+                  >
+                    Generate Emergency Token
+                  </button>
+                )}
+              </div>
+
+              {/* Personal Info */}
+              <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Personal Information</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><span className="text-gray-500">Full Name:</span> {patient.full_name}</div>
+                  <div><span className="text-gray-500">Date of Birth:</span> {formatDate(patient.date_of_birth)}</div>
+                  <div><span className="text-gray-500">Phone:</span> {patient.phone || 'N/A'}</div>
+                  <div><span className="text-gray-500">Village:</span> {patient.village || 'N/A'}</div>
+                  <div><span className="text-gray-500">District:</span> {patient.district || 'N/A'}</div>
+                  <div><span className="text-gray-500">Blood Group:</span> {patient.blood_group || 'N/A'}</div>
+                  <div><span className="text-gray-500">Allergies:</span> {patient.allergies || 'None'}</div>
+                  <div><span className="text-gray-500">Guardian:</span> {patient.guardian_name || 'N/A'}</div>
+                  {patient.is_pregnant && <div><span className="text-gray-500">EDD:</span> {formatDate(patient.edd)}</div>}
                 </div>
               </div>
 
               {/* ANC Visits */}
               {ancVisits.length > 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                  <h2 className="text-xl font-bold text-pink-700 mb-4">🤰 ANC Visits</h2>
+                  <h3 className="text-lg font-bold text-pink-700 mb-3">🤰 ANC Visits ({ancVisits.length})</h3>
                   <div className="overflow-x-auto">
                     <table className="min-w-full">
-                      <thead className="bg-gray-100">
+                      <thead className="bg-pink-50">
                         <tr>
-                          <th className="p-2 text-left">Visit #</th>
-                          <th className="p-2 text-left">Date</th>
-                          <th className="p-2 text-left">Weeks</th>
-                          <th className="p-2 text-left">Weight</th>
-                          <th className="p-2 text-left">BP</th>
-                          <th className="p-2 text-left">Risk</th>
+                          <th className="p-2">#</th>
+                          <th className="p-2">Date</th>
+                          <th className="p-2">Weeks</th>
+                          <th className="p-2">Weight</th>
+                          <th className="p-2">BP</th>
+                          <th className="p-2">Risk</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {ancVisits.map((visit) => (
-                          <tr key={visit.id} className="border-t">
-                            <td className="p-2">{visit.visit_number}</td>
-                            <td className="p-2">{formatDate(visit.visit_date)}</td>
-                            <td className="p-2">{visit.gestational_age || '-'}</td>
-                            <td className="p-2">{visit.weight || '-'}</td>
-                            <td className="p-2">{visit.blood_pressure_systolic && visit.blood_pressure_diastolic 
-                              ? `${visit.blood_pressure_systolic}/${visit.blood_pressure_diastolic}` 
-                              : '-'}</td>
-                            <td className="p-2">{visit.is_high_risk ? '🔴 High Risk' : '🟢 Normal'}</td>
+                        {ancVisits.map((v) => (
+                          <tr key={v.id} className="border-t">
+                            <td className="p-2">{v.visit_number}</td>
+                            <td className="p-2">{formatDate(v.visit_date)}</td>
+                            <td className="p-2">{v.gestational_age || '-'}</td>
+                            <td className="p-2">{v.weight || '-'}</td>
+                            <td className="p-2">{v.blood_pressure_systolic && v.blood_pressure_diastolic ? `${v.blood_pressure_systolic}/${v.blood_pressure_diastolic}` : '-'}</td>
+                            <td className="p-2">{v.is_high_risk ? '🔴 High' : '🟢 Normal'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -286,26 +373,24 @@ export default function PortalPage() {
               {/* PNC Visits */}
               {pncVisits.length > 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                  <h2 className="text-xl font-bold text-blue-700 mb-4">🤱 PNC Visits</h2>
+                  <h3 className="text-lg font-bold text-purple-700 mb-3">🤱 PNC Visits ({pncVisits.length})</h3>
                   <div className="overflow-x-auto">
                     <table className="min-w-full">
-                      <thead className="bg-gray-100">
+                      <thead className="bg-purple-50">
                         <tr>
-                          <th className="p-2 text-left">Visit</th>
-                          <th className="p-2 text-left">Date</th>
-                          <th className="p-2 text-left">Mother Weight</th>
-                          <th className="p-2 text-left">Baby Weight</th>
-                          <th className="p-2 text-left">EPDS Score</th>
+                          <th className="p-2">Type</th>
+                          <th className="p-2">Date</th>
+                          <th className="p-2">Mother Weight</th>
+                          <th className="p-2">Baby Weight</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {pncVisits.map((visit) => (
-                          <tr key={visit.id} className="border-t">
-                            <td className="p-2">{visit.visit_type}</td>
-                            <td className="p-2">{formatDate(visit.visit_date)}</td>
-                            <td className="p-2">{visit.mother_weight || '-'}</td>
-                            <td className="p-2">{visit.baby_weight || '-'}</td>
-                            <td className="p-2">{visit.epds_score !== null ? `${visit.epds_score}/30` : '-'}</td>
+                        {pncVisits.map((v) => (
+                          <tr key={v.id} className="border-t">
+                            <td className="p-2">{v.visit_type}</td>
+                            <td className="p-2">{formatDate(v.visit_date)}</td>
+                            <td className="p-2">{v.mother_weight || '-'}</td>
+                            <td className="p-2">{v.baby_weight ? `${v.baby_weight} kg` : '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -317,26 +402,24 @@ export default function PortalPage() {
               {/* Deliveries */}
               {deliveries.length > 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                  <h2 className="text-xl font-bold text-yellow-700 mb-4">👶 Deliveries</h2>
+                  <h3 className="text-lg font-bold text-yellow-700 mb-3">👶 Deliveries ({deliveries.length})</h3>
                   <div className="overflow-x-auto">
                     <table className="min-w-full">
-                      <thead className="bg-gray-100">
+                      <thead className="bg-yellow-50">
                         <tr>
-                          <th className="p-2 text-left">Date</th>
-                          <th className="p-2 text-left">Mode</th>
-                          <th className="p-2 text-left">Baby Name</th>
-                          <th className="p-2 text-left">Birth Weight</th>
-                          <th className="p-2 text-left">Maternal Outcome</th>
+                          <th className="p-2">Date</th>
+                          <th className="p-2">Mode</th>
+                          <th className="p-2">Baby Name</th>
+                          <th className="p-2">Birth Weight</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {deliveries.map((delivery) => (
-                          <tr key={delivery.id} className="border-t">
-                            <td className="p-2">{formatDate(delivery.delivery_date)}</td>
-                            <td className="p-2">{delivery.mode_of_delivery}</td>
-                            <td className="p-2">{delivery.baby_name || '-'}</td>
-                            <td className="p-2">{delivery.birth_weight ? `${delivery.birth_weight} kg` : '-'}</td>
-                            <td className="p-2">{delivery.maternal_outcome || '-'}</td>
+                        {deliveries.map((d) => (
+                          <tr key={d.id} className="border-t">
+                            <td className="p-2">{formatDate(d.delivery_date)}</td>
+                            <td className="p-2">{d.mode_of_delivery}</td>
+                            <td className="p-2">{d.baby_name || '-'}</td>
+                            <td className="p-2">{d.birth_weight ? `${d.birth_weight} kg` : '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -348,22 +431,22 @@ export default function PortalPage() {
               {/* Immunisations */}
               {immunisations.length > 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-                  <h2 className="text-xl font-bold text-teal-700 mb-4">💉 Immunisations</h2>
+                  <h3 className="text-lg font-bold text-teal-700 mb-3">💉 Immunisations ({immunisations.length})</h3>
                   <div className="overflow-x-auto">
                     <table className="min-w-full">
-                      <thead className="bg-gray-100">
+                      <thead className="bg-teal-50">
                         <tr>
-                          <th className="p-2 text-left">Vaccine</th>
-                          <th className="p-2 text-left">Dose</th>
-                          <th className="p-2 text-left">Date</th>
+                          <th className="p-2">Vaccine</th>
+                          <th className="p-2">Dose</th>
+                          <th className="p-2">Date</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {immunisations.map((imm) => (
-                          <tr key={imm.id} className="border-t">
-                            <td className="p-2">{imm.vaccine_name}</td>
-                            <td className="p-2">{imm.dose_number}</td>
-                            <td className="p-2">{formatDate(imm.administration_date)}</td>
+                        {immunisations.map((i) => (
+                          <tr key={i.id} className="border-t">
+                            <td className="p-2">{i.vaccine_name}</td>
+                            <td className="p-2">{i.dose_number}</td>
+                            <td className="p-2">{formatDate(i.administration_date)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -374,7 +457,7 @@ export default function PortalPage() {
 
               {ancVisits.length === 0 && pncVisits.length === 0 && deliveries.length === 0 && immunisations.length === 0 && (
                 <div className="bg-white rounded-lg shadow-md p-6 text-center text-gray-500">
-                  No medical records found for this patient.
+                  No medical records found.
                 </div>
               )}
             </>

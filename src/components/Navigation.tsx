@@ -1,5 +1,7 @@
+// src/components/Navigation.tsx
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -30,8 +32,11 @@ export default function Navigation() {
     { name: 'ANC Visit', path: '/anc', icon: '🤰' },
     { name: 'PNC Visit', path: '/pnc', icon: '👩‍👧' },
     { name: 'Delivery', path: '/delivery', icon: '👶' },
-    { name: 'Laboratory', path: '/lab', icon: '🔬' },
+    { name: 'Laboratory', path: '/lab', icon: '🧪' },
     { name: 'Pharmacy', path: '/pharmacy', icon: '💊' },
+    { name: 'Patient Portal', path: '/portal', icon: '👤' },
+    { name: 'Emergency Access', path: '/verify-token', icon: '🚨' },
+    { name: 'Analytics', path: '/analytics', icon: '📊' },
     { name: 'User Management', path: '/admin/users', icon: '👥' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
   ]
@@ -50,13 +55,30 @@ export default function Navigation() {
   
   return (
     <nav className="bg-green-700 text-white shadow-lg">
-      <div className="max-w-6xl mx-auto px-4">
+      <div className="max-w-7xl mx-auto px-4">
         <div className="flex flex-wrap items-center justify-between py-3">
-          {/* Logo / Brand */}
+          {/* Logo / Brand with Next.js Image component */}
           <Link href="/" className="flex items-center space-x-2">
-            <span className="text-2xl">👶</span>
-            <span className="font-bold text-lg">MamaPikin Connect</span>
-            <span className="text-xs bg-green-600 px-2 py-1 rounded">SierraCare</span>
+            <div className="relative h-10 w-10 rounded-full bg-white p-1 overflow-hidden">
+              <Image
+                src="/logo.png"
+                alt="MamaPikin Connect Logo"
+                fill
+                className="object-contain"
+                onError={(e) => {
+                  // Fallback to emoji if image fails
+                  const parent = (e.target as HTMLElement).parentElement?.parentElement
+                  if (parent) {
+                    const fallback = document.createElement('span')
+                    fallback.className = 'text-2xl'
+                    fallback.textContent = '👶'
+                    parent.appendChild(fallback)
+                  }
+                }}
+              />
+            </div>
+            <span className="font-bold text-lg hidden sm:inline">MamaPikin Connect</span>
+            <span className="text-xs bg-green-600 px-2 py-1 rounded hidden sm:inline">SierraCare</span>
           </Link>
           
           {/* Navigation Links */}
