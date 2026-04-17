@@ -38,6 +38,7 @@ export default function Navigation() {
     { name: 'Emergency Access', path: '/verify-token', icon: '🚨' },
     { name: 'Analytics', path: '/analytics', icon: '📊' },
     { name: 'User Management', path: '/admin/users', icon: '👥' },
+    { name: 'DHIS2 Export', path: '/admin/dhis2', icon: '📤' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
   ]
   
