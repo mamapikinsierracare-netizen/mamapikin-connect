@@ -2,7 +2,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import Link from 'next/link'
 import Navigation from '@/components/Navigation'
 import { useRBAC } from '@/hooks/useRBAC'
 
@@ -90,6 +89,7 @@ type LabStats = {
   tests_by_category: Record<string, number>
 }
 
+// ============ NEW ADMIN TYPES ============
 type AuditLogStats = {
   total_actions: number
   actions_by_type: Record<string, number>
@@ -190,7 +190,7 @@ type ErrorTrackingStats = {
 const getSupabaseUrl = () => process.env.NEXT_PUBLIC_SUPABASE_URL!
 const getSupabaseAnonKey = () => process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-// Demo data fallbacks (keep all your existing demo data exactly as you had)
+// Demo data fallbacks
 function getDemoPatientStats(): PatientStats { return { total_patients: 1247, pregnant_count: 432, breastfeeding_count: 256, child_count: 389, active_accounts: 1156, expired_accounts: 91, expiring_soon_30: 78, expiring_soon_7: 23, new_this_week: 45, new_this_month: 187, new_this_year: 1247 } }
 function getDemoAncStats(): AncStats { return { total_visits: 2145, anc1_count: 412, anc4_count: 287, anc4_completion_rate: 68, high_risk_pregnancies: 98, average_gestational_age: 24, average_weight_gain: 8.5, danger_signs_reported: 342, referrals_made: 167 } }
 function getDemoPncStats(): PncStats { return { total_visits: 1123, pnc1_count: 389, pnc2_count: 312, pnc3_count: 245, pnc1_coverage: 72, exclusive_breastfeeding_rate: 65, epds_high_score_count: 89, mental_health_referrals: 45 } }
@@ -198,13 +198,122 @@ function getDemoDeliveryStats(): DeliveryStats { return { total_deliveries: 523,
 function getDemoImmunisationStats(): ImmunisationStats { return { total_doses: 3421, fully_immunised_children: 234, dropout_rate_dpt1_dpt3: 8, bcg_coverage: 85, penta3_coverage: 78, measles1_coverage: 72, measles2_coverage: 55, defaulters_traced: 124 } }
 function getDemoPharmacyStats(): PharmacyStats { return { total_prescriptions: 876, prescriptions_dispensed: 812, low_stock_items: 8, expired_items: 3, total_inventory_value: 45200, most_prescribed_drug: 'Paracetamol', monthly_dispensing_trend: [45,52,48,61,55,72,68,82,78,91,85,95] } }
 function getDemoLabStats(): LabStats { return { total_requests: 534, pending_requests: 23, processing_requests: 18, completed_requests: 493, abnormal_results: 87, critical_results: 12, average_tat_hours: 28, tests_by_category: { Hematology:145, Biochemistry:234, Immunology:98, Microbiology:67, Parasitology:123 } } }
-function getDemoAuditLogStats(): AuditLogStats { return { total_actions: 3421, actions_by_type: { LOGIN: 1250, CREATE_PATIENT: 432, EDIT_PATIENT: 187, VIEW_PATIENT: 892, EXPORT_DATA: 45, APPROVE_REQUEST: 87, REJECT_REQUEST: 23 }, actions_by_user: { 'admin@mamapikin.com': 543, 'nurse@mamapikin.com': 876, 'doctor@mamapikin.com': 654, 'lab@mamapikin.com': 432 }, recent_suspicious_activity: 12, data_exports_count: 45, approval_requests_pending: 12, approval_requests_approved: 87, approval_requests_rejected: 23, most_active_users: [{ email: 'nurse@mamapikin.com', count: 876 }, { email: 'doctor@mamapikin.com', count: 654 }, { email: 'admin@mamapikin.com', count: 543 }, { email: 'lab@mamapikin.com', count: 432 }], peak_activity_hours: [9, 10, 11, 14, 15, 16] } }
-function getDemoSecurityStats(): SecurityStats { return { failed_logins_last_24h: 8, failed_logins_last_7d: 42, unique_ip_addresses: 127, unusual_access_patterns: 3, rbac_role_changes: 12, password_resets_requested: 24, token_generations: 156, emergency_access_count: 8, potential_brute_force_attempts: 2, api_requests_total: 15432, api_requests_rate_limited: 23 } }
-function getDemoSystemMonitoringStats(): SystemMonitoringStats { return { avg_response_time_ms: 245, p95_response_time_ms: 580, error_rate_percentage: 0.8, api_errors_last_24h: 34, client_errors_4xx: 28, server_errors_5xx: 6, slow_queries_count: 12, memory_usage_mb: 512, cpu_usage_percentage: 34, database_connections: 18, sync_queue_size: 8, sync_failure_rate: 1.2, last_sync_timestamp: new Date().toISOString() } }
-function getDemoPerformanceKpiStats(): PerformanceKpiStats { return { user_satisfaction_score: 4.2, average_page_load_time_ms: 1250, first_contentful_paint_ms: 850, largest_contentful_paint_ms: 2100, cumulative_layout_shift: 0.08, online_mode_uptime: 99.2, offline_mode_usage_percentage: 15, data_entry_completeness: 87, duplicate_records_count: 23, referral_completion_rate: 68, critical_alert_response_time_min: 4.5 } }
-function getDemoFacilityStats(): FacilityStats { return [{ facility_name: 'Kabala District Hospital', patient_count: 1245, anc_visits: 876, deliveries: 234, lab_requests: 432, prescriptions: 987, immunisation_doses: 1567, data_quality_score: 92 }, { facility_name: 'Bumbuna CHC', patient_count: 876, anc_visits: 543, deliveries: 123, lab_requests: 234, prescriptions: 654, immunisation_doses: 876, data_quality_score: 88 }, { facility_name: 'Mano Dasse PHU', patient_count: 432, anc_visits: 234, deliveries: 56, lab_requests: 98, prescriptions: 321, immunisation_doses: 432, data_quality_score: 76 }, { facility_name: 'Gbentu CHC', patient_count: 654, anc_visits: 432, deliveries: 98, lab_requests: 165, prescriptions: 432, immunisation_doses: 654, data_quality_score: 85 }, { facility_name: 'Freetown MCHP', patient_count: 2100, anc_visits: 1543, deliveries: 432, lab_requests: 765, prescriptions: 1654, immunisation_doses: 2345, data_quality_score: 95 }] }
-function getDemoNationalStats(): NationalStats { return { districts_covered: 14, facilities_active: 47, total_health_workers: 342, trained_users: 189, monthly_growth_rate: 8.5, geographical_coverage_percentage: 72, mch_kpi_summary: { maternal_mortality_ratio_estimate: 412, under5_mortality_estimate: 84, anc_coverage_estimate: 67, facility_delivery_rate_estimate: 58 } } }
-function getDemoErrorTrackingStats(): ErrorTrackingStats { return { total_errors_24h: 127, errors_by_type: { validation: 45, network: 32, database: 18, auth: 12, other: 20 }, errors_by_component: { frontend: 67, backend: 38, database: 22 }, unresolved_critical_errors: 3, average_error_resolution_time_hours: 4.2, top_error_messages: [{ message: 'Failed to fetch patient data', count: 45 }, { message: 'Supabase connection timeout', count: 32 }, { message: 'Invalid patient ID format', count: 23 }], browser_errors: 67, network_errors: 32, database_errors: 18, auth_errors: 10 } }
+
+function getDemoAuditLogStats(): AuditLogStats {
+  return {
+    total_actions: 3421,
+    actions_by_type: { LOGIN: 1250, CREATE_PATIENT: 432, EDIT_PATIENT: 187, VIEW_PATIENT: 892, EXPORT_DATA: 45, APPROVE_REQUEST: 87, REJECT_REQUEST: 23 },
+    actions_by_user: { 'admin@mamapikin.com': 543, 'nurse@mamapikin.com': 876, 'doctor@mamapikin.com': 654, 'lab@mamapikin.com': 432 },
+    recent_suspicious_activity: 12,
+    data_exports_count: 45,
+    approval_requests_pending: 12,
+    approval_requests_approved: 87,
+    approval_requests_rejected: 23,
+    most_active_users: [
+      { email: 'nurse@mamapikin.com', count: 876 },
+      { email: 'doctor@mamapikin.com', count: 654 },
+      { email: 'admin@mamapikin.com', count: 543 },
+      { email: 'lab@mamapikin.com', count: 432 },
+    ],
+    peak_activity_hours: [9, 10, 11, 14, 15, 16],
+  }
+}
+
+function getDemoSecurityStats(): SecurityStats {
+  return {
+    failed_logins_last_24h: 8,
+    failed_logins_last_7d: 42,
+    unique_ip_addresses: 127,
+    unusual_access_patterns: 3,
+    rbac_role_changes: 12,
+    password_resets_requested: 24,
+    token_generations: 156,
+    emergency_access_count: 8,
+    potential_brute_force_attempts: 2,
+    api_requests_total: 15432,
+    api_requests_rate_limited: 23,
+  }
+}
+
+function getDemoSystemMonitoringStats(): SystemMonitoringStats {
+  return {
+    avg_response_time_ms: 245,
+    p95_response_time_ms: 580,
+    error_rate_percentage: 0.8,
+    api_errors_last_24h: 34,
+    client_errors_4xx: 28,
+    server_errors_5xx: 6,
+    slow_queries_count: 12,
+    memory_usage_mb: 512,
+    cpu_usage_percentage: 34,
+    database_connections: 18,
+    sync_queue_size: 8,
+    sync_failure_rate: 1.2,
+    last_sync_timestamp: new Date().toISOString(),
+  }
+}
+
+function getDemoPerformanceKpiStats(): PerformanceKpiStats {
+  return {
+    user_satisfaction_score: 4.2,
+    average_page_load_time_ms: 1250,
+    first_contentful_paint_ms: 850,
+    largest_contentful_paint_ms: 2100,
+    cumulative_layout_shift: 0.08,
+    online_mode_uptime: 99.2,
+    offline_mode_usage_percentage: 15,
+    data_entry_completeness: 87,
+    duplicate_records_count: 23,
+    referral_completion_rate: 68,
+    critical_alert_response_time_min: 4.5,
+  }
+}
+
+function getDemoFacilityStats(): FacilityStats {
+  return [
+    { facility_name: 'Kabala District Hospital', patient_count: 1245, anc_visits: 876, deliveries: 234, lab_requests: 432, prescriptions: 987, immunisation_doses: 1567, data_quality_score: 92 },
+    { facility_name: 'Bumbuna CHC', patient_count: 876, anc_visits: 543, deliveries: 123, lab_requests: 234, prescriptions: 654, immunisation_doses: 876, data_quality_score: 88 },
+    { facility_name: 'Mano Dasse PHU', patient_count: 432, anc_visits: 234, deliveries: 56, lab_requests: 98, prescriptions: 321, immunisation_doses: 432, data_quality_score: 76 },
+    { facility_name: 'Gbentu CHC', patient_count: 654, anc_visits: 432, deliveries: 98, lab_requests: 165, prescriptions: 432, immunisation_doses: 654, data_quality_score: 85 },
+    { facility_name: 'Freetown MCHP', patient_count: 2100, anc_visits: 1543, deliveries: 432, lab_requests: 765, prescriptions: 1654, immunisation_doses: 2345, data_quality_score: 95 },
+  ]
+}
+
+function getDemoNationalStats(): NationalStats {
+  return {
+    districts_covered: 14,
+    facilities_active: 47,
+    total_health_workers: 342,
+    trained_users: 189,
+    monthly_growth_rate: 8.5,
+    geographical_coverage_percentage: 72,
+    mch_kpi_summary: {
+      maternal_mortality_ratio_estimate: 412,
+      under5_mortality_estimate: 84,
+      anc_coverage_estimate: 67,
+      facility_delivery_rate_estimate: 58,
+    },
+  }
+}
+
+function getDemoErrorTrackingStats(): ErrorTrackingStats {
+  return {
+    total_errors_24h: 127,
+    errors_by_type: { validation: 45, network: 32, database: 18, auth: 12, other: 20 },
+    errors_by_component: { frontend: 67, backend: 38, database: 22 },
+    unresolved_critical_errors: 3,
+    average_error_resolution_time_hours: 4.2,
+    top_error_messages: [
+      { message: 'Failed to fetch patient data', count: 45 },
+      { message: 'Supabase connection timeout', count: 32 },
+      { message: 'Invalid patient ID format', count: 23 },
+    ],
+    browser_errors: 67,
+    network_errors: 32,
+    database_errors: 18,
+    auth_errors: 10,
+  }
+}
 
 // Fetch functions with demo fallbacks
 async function fetchPatientStats(): Promise<PatientStats> { return getDemoPatientStats() }
@@ -224,16 +333,9 @@ async function fetchErrorTrackingStats(): Promise<ErrorTrackingStats> { return g
 
 // ============ MAIN COMPONENT ==========
 export default function AnalyticsPage() {
-  const { user, isAdmin, isMasterAdmin, isSuperAdmin } = useRBAC()
+  const { user, isAdmin } = useRBAC()
   const [loading, setLoading] = useState(true)
   const [activeSection, setActiveSection] = useState('clinical')
-  
-  // ✅ FIXED: Allow access for all admin roles (including FACILITY_ADMIN)
-  const hasAccess = isAdmin() || isMasterAdmin() || isSuperAdmin() || 
-                    user?.role === 'MASTER_ADMIN' || 
-                    user?.role === 'SUPER_ADMIN' || 
-                    user?.role === 'SYSTEM_ADMIN' ||
-                    user?.role === 'FACILITY_ADMIN'
   
   const [patientStats, setPatientStats] = useState<PatientStats | null>(null)
   const [ancStats, setAncStats] = useState<AncStats | null>(null)
@@ -288,12 +390,11 @@ export default function AnalyticsPage() {
       setErrorStats(errors)
       setLoading(false)
     }
-    if (hasAccess) loadAllStats()
+    if (isAdmin()) loadAllStats()
     else setLoading(false)
-  }, [hasAccess])
+  }, [isAdmin])
 
-  // Show access denied if not authorized
-  if (!hasAccess && !loading) {
+  if (!isAdmin() && !loading) {
     return (
       <>
         <Navigation />
@@ -301,8 +402,7 @@ export default function AnalyticsPage() {
           <div className="max-w-4xl mx-auto px-4 text-center">
             <div className="bg-red-100 text-red-800 p-6 rounded-lg">
               <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
-              <p>Only Administrators (Master Admin, Super Admin, System Admin, Facility Admin) can view analytics.</p>
-              <Link href="/" className="text-green-600 underline mt-4 inline-block">Return to Dashboard →</Link>
+              <p>Only Administrators can view analytics.</p>
             </div>
           </div>
         </div>
@@ -423,9 +523,8 @@ export default function AnalyticsPage() {
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.unique_ip_addresses}</div><div className="text-gray-500">Unique IPs</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.rbac_role_changes}</div><div className="text-gray-500">Role Changes</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.token_generations}</div><div className="text-gray-500">Tokens Generated</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.emergency_access_count}</div><div className="text-gray-500">Emergency Access</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.api_requests_total.toLocaleString()}</div><div className="text-gray-500">API Requests</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-yellow-600">{securityStats.api_requests_rate_limited}</div><div className="text-gray-500">Rate Limited</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.emergency_access_count}</div><div className="text-gray-500">Emergency Accesses</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{securityStats.api_requests_rate_limited}</div><div className="text-gray-500">Rate Limited Requests</div></div>
                 </div>
               )}
 
@@ -433,17 +532,19 @@ export default function AnalyticsPage() {
               {activeSection === 'system' && systemMonitorStats && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.avg_response_time_ms}ms</div><div className="text-gray-500">Avg Response Time</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.p95_response_time_ms}ms</div><div className="text-gray-500">P95 Response Time</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-red-600">{systemMonitorStats.error_rate_percentage}%</div><div className="text-gray-500">Error Rate</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-yellow-600">{systemMonitorStats.error_rate_percentage}%</div><div className="text-gray-500">Error Rate</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.api_errors_last_24h}</div><div className="text-gray-500">API Errors (24h)</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.memory_usage_mb}MB</div><div className="text-gray-500">Memory Usage</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-red-600">{systemMonitorStats.server_errors_5xx}</div><div className="text-gray-500">5xx Errors</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.cpu_usage_percentage}%</div><div className="text-gray-500">CPU Usage</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.memory_usage_mb} MB</div><div className="text-gray-500">Memory Usage</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.database_connections}</div><div className="text-gray-500">DB Connections</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.sync_queue_size}</div><div className="text-gray-500">Sync Queue Size</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{systemMonitorStats.sync_failure_rate}%</div><div className="text-gray-500">Sync Failure Rate</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{new Date(systemMonitorStats.last_sync_timestamp).toLocaleString()}</div><div className="text-gray-500">Last Sync</div></div>
                 </div>
               )}
 
-              {/* ========== PERFORMANCE KPIS ========== */}
+              {/* ========== PERFORMANCE KPIs ========== */}
               {activeSection === 'performance' && perfKpiStats && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.user_satisfaction_score}/5</div><div className="text-gray-500">User Satisfaction</div></div>
@@ -451,8 +552,9 @@ export default function AnalyticsPage() {
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.online_mode_uptime}%</div><div className="text-gray-500">Online Uptime</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.offline_mode_usage_percentage}%</div><div className="text-gray-500">Offline Usage</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.data_entry_completeness}%</div><div className="text-gray-500">Data Completeness</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-red-600">{perfKpiStats.duplicate_records_count}</div><div className="text-gray-500">Duplicate Records</div></div>
                   <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.referral_completion_rate}%</div><div className="text-gray-500">Referral Completion</div></div>
-                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.critical_alert_response_time_min}min</div><div className="text-gray-500">Alert Response Time</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{perfKpiStats.critical_alert_response_time_min} min</div><div className="text-gray-500">Critical Alert Response</div></div>
                 </div>
               )}
 
@@ -460,20 +562,10 @@ export default function AnalyticsPage() {
               {activeSection === 'facility' && facilityStats && (
                 <div className="overflow-x-auto">
                   <table className="min-w-full bg-white rounded shadow">
-                    <thead className="bg-gray-100">
-                      <tr><th className="p-3 text-left">Facility</th><th className="p-3 text-left">Patients</th><th className="p-3 text-left">ANC Visits</th><th className="p-3 text-left">Deliveries</th><th className="p-3 text-left">Lab Requests</th><th className="p-3 text-left">Immunisations</th><th className="p-3 text-left">Data Quality</th></tr>
-                    </thead>
+                    <thead className="bg-gray-100"><tr><th className="p-3 text-left">Facility</th><th>Patients</th><th>ANC</th><th>Deliveries</th><th>Lab</th><th>Prescriptions</th><th>Immunisation</th><th>Data Quality</th></tr></thead>
                     <tbody>
                       {facilityStats.map(f => (
-                        <tr key={f.facility_name} className="border-t">
-                          <td className="p-3 font-medium">{f.facility_name}</td>
-                          <td className="p-3">{f.patient_count}</td>
-                          <td className="p-3">{f.anc_visits}</td>
-                          <td className="p-3">{f.deliveries}</td>
-                          <td className="p-3">{f.lab_requests}</td>
-                          <td className="p-3">{f.immunisation_doses}</td>
-                          <td className="p-3"><span className={`px-2 py-1 rounded text-xs ${f.data_quality_score >= 90 ? 'bg-green-100 text-green-800' : f.data_quality_score >= 75 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{f.data_quality_score}%</span></td>
-                        </tr>
+                        <tr key={f.facility_name} className="border-t"><td className="p-3 font-medium">{f.facility_name}</td><td className="p-3">{f.patient_count}</td><td className="p-3">{f.anc_visits}</td><td className="p-3">{f.deliveries}</td><td className="p-3">{f.lab_requests}</td><td className="p-3">{f.prescriptions}</td><td className="p-3">{f.immunisation_doses}</td><td className="p-3"><span className={`px-2 py-1 rounded-full text-xs ${f.data_quality_score >= 90 ? 'bg-green-100 text-green-800' : f.data_quality_score >= 70 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{f.data_quality_score}%</span></td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -482,22 +574,13 @@ export default function AnalyticsPage() {
 
               {/* ========== NATIONAL LEVEL ========== */}
               {activeSection === 'national' && nationalStats && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.districts_covered}</div><div className="text-gray-500">Districts Covered</div></div>
-                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.facilities_active}</div><div className="text-gray-500">Active Facilities</div></div>
-                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.total_health_workers}</div><div className="text-gray-500">Health Workers</div></div>
-                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.geographical_coverage_percentage}%</div><div className="text-gray-500">Geographic Coverage</div></div>
-                  </div>
-                  <div className="bg-white p-4 rounded shadow">
-                    <h3 className="font-bold mb-2">MCH KPIs (Estimated)</h3>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>Maternal Mortality Ratio:</div><div className="font-bold">{nationalStats.mch_kpi_summary.maternal_mortality_ratio_estimate} per 100k</div>
-                      <div>Under-5 Mortality:</div><div className="font-bold">{nationalStats.mch_kpi_summary.under5_mortality_estimate} per 1000</div>
-                      <div>ANC Coverage:</div><div className="font-bold">{nationalStats.mch_kpi_summary.anc_coverage_estimate}%</div>
-                      <div>Facility Delivery Rate:</div><div className="font-bold">{nationalStats.mch_kpi_summary.facility_delivery_rate_estimate}%</div>
-                    </div>
-                  </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.districts_covered}/16</div><div className="text-gray-500">Districts Covered</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.facilities_active}</div><div className="text-gray-500">Active Facilities</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.total_health_workers}</div><div className="text-gray-500">Health Workers</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.trained_users}</div><div className="text-gray-500">Trained Users</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.monthly_growth_rate}%</div><div className="text-gray-500">Monthly Growth</div></div>
+                  <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{nationalStats.geographical_coverage_percentage}%</div><div className="text-gray-500">Geographic Coverage</div></div>
                 </div>
               )}
 
@@ -506,11 +589,12 @@ export default function AnalyticsPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-red-600">{errorStats.total_errors_24h}</div><div className="text-gray-500">Errors (24h)</div></div>
-                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-orange-600">{errorStats.unresolved_critical_errors}</div><div className="text-gray-500">Critical Unresolved</div></div>
+                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold text-red-600">{errorStats.unresolved_critical_errors}</div><div className="text-gray-500">Unresolved Critical</div></div>
                     <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{errorStats.average_error_resolution_time_hours}h</div><div className="text-gray-500">Avg Resolution Time</div></div>
+                    <div className="bg-white p-4 rounded shadow"><div className="text-3xl font-bold">{errorStats.browser_errors}</div><div className="text-gray-500">Browser Errors</div></div>
                   </div>
                   <div className="bg-white p-4 rounded shadow"><h3 className="font-bold mb-2">Errors by Type</h3>{Object.entries(errorStats.errors_by_type).map(([type, count]) => (<div key={type} className="flex justify-between"><span>{type}</span><span className="font-bold">{count}</span></div>))}</div>
-                  <div className="bg-white p-4 rounded shadow"><h3 className="font-bold mb-2">Top Error Messages</h3>{errorStats.top_error_messages.map((e, i) => (<div key={i} className="flex justify-between"><span className="text-sm">{e.message}</span><span className="font-bold">{e.count}</span></div>))}</div>
+                  <div className="bg-white p-4 rounded shadow"><h3 className="font-bold mb-2">Top Error Messages</h3>{errorStats.top_error_messages.map(e => (<div key={e.message} className="flex justify-between"><span>{e.message}</span><span className="font-bold">{e.count}</span></div>))}</div>
                 </div>
               )}
             </>
