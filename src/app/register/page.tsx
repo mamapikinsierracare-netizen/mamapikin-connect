@@ -386,7 +386,7 @@ export default function RegisterPage() {
                 <button
                   onClick={() => {
                     setRegistrationType('emergency')
-                    setPatientType('emergency')
+                    setPatientType('pregnant')
                     setStep('form')
                   }}
                   className="p-8 bg-yellow-50 border-2 border-yellow-200 rounded-xl hover:bg-yellow-100 hover:border-yellow-400 transition-all text-center"
