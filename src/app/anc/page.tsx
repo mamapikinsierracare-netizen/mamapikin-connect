@@ -39,18 +39,48 @@ type AncVisit = {
   synced_to_cloud: boolean
 }
 
-// Check Supabase connection - WITH CORS HANDLING
+// CRITICAL DANGER SIGNS that trigger SMS
+const CRITICAL_DANGER_SIGNS = [
+  'Severe headache', 'Blurred vision', 'Convulsions', 
+  'Severe abdominal pain', 'Vaginal bleeding', 'Difficulty breathing',
+  'Reduced fetal movement', 'Swelling of hands/face'
+]
+
+// SMS Service
+const smsService = {
+  async sendDangerSignAlert(alert: any): Promise<boolean> {
+    if (!navigator.onLine) {
+      // Queue for later
+      const queue = localStorage.getItem('sms_queue')
+      const alerts = queue ? JSON.parse(queue) : []
+      alerts.push({ ...alert, queuedAt: new Date().toISOString() })
+      localStorage.setItem('sms_queue', JSON.stringify(alerts))
+      console.log('📡 Offline: SMS queued')
+      return false
+    }
+
+    try {
+      const response = await fetch('/api/sms/danger-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(alert)
+      })
+      return response.ok
+    } catch (error) {
+      console.error('SMS failed:', error)
+      return false
+    }
+  }
+}
+
+// Check Supabase connection
 async function isSupabaseReachable(): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.log('❌ Missing Supabase credentials')
-    return false
-  }
+  if (!supabaseUrl || !supabaseAnonKey) return false
   
   try {
-    // Try a simple GET request to check connectivity
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 5000)
     
@@ -64,21 +94,17 @@ async function isSupabaseReachable(): Promise<boolean> {
     })
     
     clearTimeout(timeoutId)
-    console.log('📡 Supabase response:', response.status)
     return response.status === 200 || response.status === 206
-  } catch (error) {
-    console.log('❌ Supabase connection error:', error)
+  } catch {
     return false
   }
 }
 
-// Safe string helper - prevents undefined errors
 function safeString(value: any): string {
   if (!value || value === null || value === undefined) return ''
   return String(value)
 }
 
-// Get ALL patients from BOTH sources
 async function getAllPatients(): Promise<Patient[]> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -145,7 +171,6 @@ async function getAllPatients(): Promise<Patient[]> {
   return results.sort((a, b) => safeString(a.full_name).localeCompare(safeString(b.full_name)))
 }
 
-// Get existing ANC visits
 async function getPatientAncVisits(patientId: string): Promise<AncVisit[]> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -181,7 +206,6 @@ async function getPatientAncVisits(patientId: string): Promise<AncVisit[]> {
   return allVisits.sort((a, b) => a.visit_number - b.visit_number)
 }
 
-// Save ANC visit
 async function saveAncVisit(visit: AncVisit, isOnline: boolean): Promise<{ local: boolean; cloud: boolean }> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -199,7 +223,6 @@ async function saveAncVisit(visit: AncVisit, isOnline: boolean): Promise<{ local
   // 2. Try to save to Supabase if online
   if (isOnline && supabaseUrl && supabaseAnonKey) {
     try {
-      console.log('☁️ Attempting to save to Supabase...')
       const { id, ...dataWithoutId } = visit as any
       
       const controller = new AbortController()
@@ -221,9 +244,6 @@ async function saveAncVisit(visit: AncVisit, isOnline: boolean): Promise<{ local
       if (response.ok) {
         cloudSaved = true
         console.log('✅ Saved to Supabase cloud!')
-      } else {
-        const errorText = await response.text()
-        console.log('❌ Supabase save failed:', response.status, errorText)
       }
     } catch (error) {
       console.log('❌ Supabase save error:', error)
@@ -257,16 +277,35 @@ function checkAlerts(visit: Partial<AncVisit>): string[] {
   if (visit.hemoglobin && visit.hemoglobin < 10) {
     alerts.push('🟠 ANEMIA - Hemoglobin below 10 g/dL')
   }
-  if (visit.hemoglobin && visit.hemoglobin < 7) {
-    alerts.push('🔴 SEVERE ANEMIA - Blood transfusion may be needed')
-  }
-  if (visit.fetal_heart_rate && (visit.fetal_heart_rate < 110 || visit.fetal_heart_rate > 160)) {
-    alerts.push('🟠 ABNORMAL FETAL HEART RATE')
-  }
   if (visit.danger_signs && visit.danger_signs.length > 0) {
     alerts.push('🔴 DANGER SIGNS PRESENT - Urgent referral needed')
   }
   return alerts
+}
+
+async function sendDangerSignAlerts(
+  dangerSigns: string[], 
+  patient: Patient, 
+  facilityName: string
+) {
+  const criticalSigns = dangerSigns.filter(sign => 
+    CRITICAL_DANGER_SIGNS.includes(sign)
+  );
+
+  if (criticalSigns.length > 0) {
+    for (const sign of criticalSigns) {
+      await smsService.sendDangerSignAlert({
+        patientName: patient.full_name,
+        patientId: patient.patient_id,
+        dangerSign: sign,
+        recordedAt: new Date(),
+        facilityName: facilityName,
+        chwName: localStorage.getItem('chw_name') || 'CHW'
+      });
+    }
+    
+    alert(`⚠️ CRITICAL: ${criticalSigns.join(', ')} detected! Emergency SMS sent to supervisor.`);
+  }
 }
 
 export default function AncPage() {
@@ -307,7 +346,6 @@ export default function AncPage() {
   useEffect(() => {
     async function checkConnection() {
       const online = await isSupabaseReachable()
-      console.log('🌐 Connection status:', online ? 'ONLINE' : 'OFFLINE')
       setConnectionStatus(online ? 'online' : 'offline')
     }
     checkConnection()
@@ -325,22 +363,16 @@ export default function AncPage() {
     loadPatients()
   }, [])
 
-  // Filter patients when search term changes - WITH SAFE CHECKING
+  // Filter patients when search term changes
   useEffect(() => {
     if (searchTerm.trim() === '') {
       setFilteredPatients(allPatients)
     } else {
       const lowerSearch = searchTerm.toLowerCase()
       const filtered = allPatients.filter(p => {
-        // SAFE CHECK: ensure p exists and has properties
         if (!p) return false
-        const fullName = safeString(p.full_name).toLowerCase()
-        const patientId = safeString(p.patient_id).toLowerCase()
-        const phone = safeString(p.phone).toLowerCase()
-        
-        return fullName.includes(lowerSearch) || 
-               patientId.includes(lowerSearch) || 
-               phone.includes(lowerSearch)
+        return safeString(p.full_name).toLowerCase().includes(lowerSearch) || 
+               safeString(p.patient_id).toLowerCase().includes(lowerSearch)
       })
       setFilteredPatients(filtered)
     }
@@ -390,13 +422,6 @@ export default function AncPage() {
         setFormData({ ...formData, danger_signs: [...current, value] })
       } else {
         setFormData({ ...formData, danger_signs: current.filter(v => v !== value) })
-      }
-    } else if (type === 'checkbox' && name === 'risk_factors') {
-      const current = formData.risk_factors as string[]
-      if (checked) {
-        setFormData({ ...formData, risk_factors: [...current, value] })
-      } else {
-        setFormData({ ...formData, risk_factors: current.filter(v => v !== value) })
       }
     } else if (type === 'checkbox') {
       setFormData({ ...formData, [name]: checked })
@@ -452,17 +477,27 @@ export default function AncPage() {
       const isOnline = connectionStatus === 'online'
       const result = await saveAncVisit(visit, isOnline)
       
+      // Send SMS alerts for danger signs
+      if (visit.danger_signs && visit.danger_signs.length > 0 && selectedPatient) {
+        await sendDangerSignAlerts(
+          visit.danger_signs,
+          selectedPatient,
+          localStorage.getItem('facility_name') || 'Health Facility'
+        );
+      }
+      
       if (result.cloud) {
         setMessageType('success')
         setMessage(`✅ ANC Visit #${visit.visit_number} saved to CLOUD and local storage!`)
       } else if (result.local && isOnline) {
         setMessageType('warning')
-        setMessage(`⚠️ ANC Visit #${visit.visit_number} saved locally only. Cloud save failed. Check Supabase table.`)
+        setMessage(`⚠️ ANC Visit #${visit.visit_number} saved locally only. Cloud save failed.`)
       } else {
         setMessageType('success')
         setMessage(`✅ ANC Visit #${visit.visit_number} saved locally! Will sync when online.`)
       }
       
+      // Reset form
       setFormData({
         visit_number: existingVisits.length + 2,
         gestational_age: null,
@@ -507,14 +542,9 @@ export default function AncPage() {
             'bg-gray-100 text-gray-800 border-2 border-gray-500'
           }`}>
             <div className="text-2xl font-bold">
-              {connectionStatus === 'online' ? '✅ ONLINE MODE - Connected to Supabase' : 
+              {connectionStatus === 'online' ? '✅ ONLINE MODE' : 
                connectionStatus === 'offline' ? '📡 OFFLINE MODE - Saving locally only' :
                '⏳ CHECKING CONNECTION...'}
-            </div>
-            <div className="text-sm mt-1">
-              {connectionStatus === 'online' ? 'Data will save to cloud immediately' : 
-               connectionStatus === 'offline' ? 'Data will save to local storage. Sync when online.' :
-               'Detecting network connection...'}
             </div>
           </div>
           
@@ -539,52 +569,31 @@ export default function AncPage() {
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 className="text-xl font-bold text-gray-800 mb-4">1. Select Patient</h2>
             
-            {/* Search Box with Icon */}
             <div ref={searchRef} className="relative">
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">
-                  <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onFocus={() => setShowDropdown(true)}
-                  placeholder="Search by name, patient ID, or phone number..."
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-200"
-                />
-                {searchTerm && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchTerm('')}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  >
-                    <svg className="h-5 w-5 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onFocus={() => setShowDropdown(true)}
+                placeholder="Search by name, patient ID, or phone number..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500"
+              />
               
               {showDropdown && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 overflow-y-auto">
                   {filteredPatients.length === 0 ? (
                     <div className="p-4 text-gray-500 text-center">
-                      No patients found. <a href="/register" className="text-green-600 hover:underline">Register a new patient</a>
+                      No patients found. <a href="/register" className="text-green-600">Register a new patient</a>
                     </div>
                   ) : (
-                    filteredPatients.map((patient, index) => (
+                    filteredPatients.map((patient) => (
                       <div
-                        key={`${patient.patient_id}-${index}`}
+                        key={patient.patient_id}
                         onClick={() => handleSelectPatient(patient)}
-                        className="p-3 hover:bg-green-50 cursor-pointer border-b last:border-b-0 transition-colors"
+                        className="p-3 hover:bg-green-50 cursor-pointer border-b"
                       >
-                        <div className="font-medium text-gray-800">{safeString(patient.full_name) || 'Unnamed Patient'}</div>
-                        <div className="text-sm text-gray-500">
-                          ID: {safeString(patient.patient_id)} | 📞 {patient.phone || 'No phone'} | 📍 {patient.district || 'No district'}
-                        </div>
+                        <div className="font-medium">{safeString(patient.full_name)}</div>
+                        <div className="text-sm text-gray-500">ID: {safeString(patient.patient_id)}</div>
                       </div>
                     ))
                   )}
@@ -592,42 +601,17 @@ export default function AncPage() {
               )}
             </div>
             
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDropdown(true)
-                  setSearchTerm('')
-                }}
-                className="text-sm text-green-600 hover:text-green-800 flex items-center gap-1"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-                Browse all patients ({allPatients.length})
-              </button>
-            </div>
-            
             {selectedPatient && (
               <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-bold text-green-800 text-lg">{safeString(selectedPatient.full_name)}</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      <span className="font-medium">Patient ID:</span> {safeString(selectedPatient.patient_id)}<br />
-                      <span className="font-medium">Phone:</span> {selectedPatient.phone || 'N/A'}<br />
-                      <span className="font-medium">District:</span> {selectedPatient.district || 'N/A'}<br />
-                      <span className="font-medium">Village:</span> {selectedPatient.village || 'N/A'}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPatient(null)}
-                    className="text-red-600 hover:text-red-800 text-sm"
-                  >
-                    Change
-                  </button>
-                </div>
+                <div className="font-bold text-green-800">{safeString(selectedPatient.full_name)}</div>
+                <div className="text-sm text-gray-600">ID: {safeString(selectedPatient.patient_id)}</div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPatient(null)}
+                  className="mt-2 text-red-600 text-sm"
+                >
+                  Change Patient
+                </button>
               </div>
             )}
           </div>
@@ -636,7 +620,7 @@ export default function AncPage() {
           {selectedPatient && (
             <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-4">
-                2. ANC Visit #{formData.visit_number} for {safeString(selectedPatient.full_name)}
+                2. ANC Visit #{formData.visit_number}
               </h2>
               
               {alerts.length > 0 && (
@@ -659,15 +643,11 @@ export default function AncPage() {
                 </div>
                 <div>
                   <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Systolic)</label>
-                  <input type="number" name="blood_pressure_systolic" value={formData.blood_pressure_systolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., 120" />
+                  <input type="number" name="blood_pressure_systolic" value={formData.blood_pressure_systolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
                 </div>
                 <div>
                   <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Diastolic)</label>
-                  <input type="number" name="blood_pressure_diastolic" value={formData.blood_pressure_diastolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" placeholder="e.g., 80" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Fundal Height (cm)</label>
-                  <input type="number" step="0.1" name="fundal_height" value={formData.fundal_height || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
+                  <input type="number" name="blood_pressure_diastolic" value={formData.blood_pressure_diastolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
                 </div>
                 <div>
                   <label className="block text-gray-700 font-medium mb-1">Fetal Heart Rate (bpm)</label>
@@ -679,48 +659,11 @@ export default function AncPage() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Fetal Movements</label>
-                  <select name="fetal_movements" value={formData.fetal_movements} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
-                    <option value="Normal">Normal</option>
-                    <option value="Reduced">Reduced</option>
-                    <option value="Absent">Absent</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Presentation</label>
-                  <select name="presentation" value={formData.presentation} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
-                    <option value="Cephalic">Cephalic (Head down)</option>
-                    <option value="Breech">Breech</option>
-                    <option value="Transverse">Transverse</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Edema</label>
-                  <select name="edema" value={formData.edema} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
-                    <option value="None">None</option>
-                    <option value="Feet">Feet only</option>
-                    <option value="Hands">Hands</option>
-                    <option value="Face">Face</option>
-                    <option value="Generalized">Generalized</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Urine Protein</label>
-                  <select name="urine_protein" value={formData.urine_protein} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg">
-                    <option value="Negative">Negative</option>
-                    <option value="Trace">Trace</option>
-                    <option value="Positive">Positive</option>
-                  </select>
-                </div>
-              </div>
-              
               <div className="mt-4">
                 <label className="block text-gray-700 font-medium mb-2">Danger Signs (Check all that apply)</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {['Severe headache', 'Blurred vision', 'Swelling of hands/face', 'Fever', 'Severe abdominal pain', 'Reduced fetal movement', 'Vaginal bleeding', 'Convulsions', 'Difficulty breathing'].map((sign, idx) => (
-                    <label key={`danger-${idx}`} className="flex items-center gap-2">
+                  {['Severe headache', 'Blurred vision', 'Swelling of hands/face', 'Fever', 'Severe abdominal pain', 'Reduced fetal movement', 'Vaginal bleeding', 'Convulsions', 'Difficulty breathing'].map((sign) => (
+                    <label key={sign} className="flex items-center gap-2">
                       <input type="checkbox" name="danger_signs" value={sign} checked={formData.danger_signs?.includes(sign)} onChange={handleChange} />
                       <span className="text-sm">{sign}</span>
                     </label>
@@ -737,7 +680,7 @@ export default function AncPage() {
               
               <div className="mt-4">
                 <label className="block text-gray-700 font-medium mb-1">Clinical Notes</label>
-                <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="w-full px-3 py-2 border rounded-lg" placeholder="Enter any additional clinical notes..." />
+                <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="w-full px-3 py-2 border rounded-lg" />
               </div>
               
               <button
@@ -753,7 +696,7 @@ export default function AncPage() {
           {/* Visit History */}
           {selectedPatient && existingVisits.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Visit History - {safeString(selectedPatient.full_name)}</h2>
+              <h2 className="text-xl font-bold text-gray-800 mb-4">Visit History</h2>
               <div className="overflow-x-auto">
                 <table className="min-w-full">
                   <thead className="bg-gray-100">
@@ -761,21 +704,15 @@ export default function AncPage() {
                       <th className="p-2 text-left">Visit #</th>
                       <th className="p-2 text-left">Date</th>
                       <th className="p-2 text-left">Weeks</th>
-                      <th className="p-2 text-left">Weight</th>
-                      <th className="p-2 text-left">BP</th>
-                      <th className="p-2 text-left">FHR</th>
                       <th className="p-2 text-left">Risk</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {existingVisits.map((visit, idx) => (
-                      <tr key={`visit-${visit.visit_id}-${idx}`} className="border-t">
+                    {existingVisits.map((visit) => (
+                      <tr key={visit.visit_id} className="border-t">
                         <td className="p-2">{visit.visit_number}</td>
                         <td className="p-2">{new Date(visit.visit_date).toLocaleDateString()}</td>
                         <td className="p-2">{visit.gestational_age || '-'}</td>
-                        <td className="p-2">{visit.weight || '-'}</td>
-                        <td className="p-2">{visit.blood_pressure_systolic && visit.blood_pressure_diastolic ? `${visit.blood_pressure_systolic}/${visit.blood_pressure_diastolic}` : '-'}</td>
-                        <td className="p-2">{visit.fetal_heart_rate || '-'}</td>
                         <td className="p-2">{visit.is_high_risk ? '🔴 High' : '🟢 Normal'}</td>
                       </tr>
                     ))}

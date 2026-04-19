@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MamaPikin Connect - Offline</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 { font-size: 2rem; margin-bottom: 1rem; }
+        p { opacity: 0.9; margin-bottom: 2rem; }
+        button {
+            background: white;
+            color: #059669;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover { background: #f0fdf4; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">📡</div>
+        <h1>You are offline</h1>
+        <p>MamaPikin Connect works offline!<br>Your data will sync when you reconnect.</p>
+        <button onclick="location.reload()">Try Again</button>
+    </div>
+</body>
+</html>

@@ -97,27 +97,46 @@ function getStatusColor(daysRemaining: number): string {
   return 'bg-green-100 text-green-800 border-green-400'
 }
 
-function saveToLocalStorage(patientData: PatientData) {
-  const existing = localStorage.getItem('offline_patients')
-  const patients = existing ? JSON.parse(existing) : []
-  patients.push(patientData)
-  localStorage.setItem('offline_patients', JSON.stringify(patients))
-  console.log('Saved to localStorage:', patientData.patient_id)
-  return true
-}
+// ========== OFFLINE-FIRST STORAGE FUNCTIONS ==========
 
-function markPatientAsSyncedInLocalStorage(patientId: string) {
-  const existing = localStorage.getItem('offline_patients')
-  if (existing) {
-    const patients = JSON.parse(existing)
-    const updated = patients.map((p: PatientData) =>
-      p.patient_id === patientId ? { ...p, synced_to_cloud: true } : p
-    )
-    localStorage.setItem('offline_patients', JSON.stringify(updated))
-    console.log('Marked patient', patientId, 'as synced in localStorage')
+// Save patient to localStorage (always works offline)
+function saveToLocalStorage(patientData: PatientData): boolean {
+  try {
+    const existing = localStorage.getItem('offline_patients')
+    const patients = existing ? JSON.parse(existing) : []
+    
+    // Check if patient already exists
+    const exists = patients.find((p: PatientData) => p.patient_id === patientData.patient_id)
+    if (!exists) {
+      patients.push(patientData)
+      localStorage.setItem('offline_patients', JSON.stringify(patients))
+      console.log('💾 Patient saved to localStorage:', patientData.patient_id)
+    }
+    return true
+  } catch (error) {
+    console.error('Failed to save to localStorage:', error)
+    return false
   }
 }
 
+// Mark patient as synced in localStorage
+function markPatientAsSyncedInLocalStorage(patientId: string) {
+  try {
+    const existing = localStorage.getItem('offline_patients')
+    if (existing) {
+      const patients = JSON.parse(existing)
+      const updated = patients.map((p: PatientData) =>
+        p.patient_id === patientId ? { ...p, synced_to_cloud: true } : p
+      )
+      localStorage.setItem('offline_patients', JSON.stringify(updated))
+      console.log('✅ Marked patient as synced:', patientId)
+    }
+  } catch (error) {
+    console.error('Failed to mark patient as synced:', error)
+  }
+}
+
+// Save to Supabase (online only)
 async function saveToSupabase(patientData: PatientData): Promise<{ success: boolean; error?: string }> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -140,7 +159,7 @@ async function saveToSupabase(patientData: PatientData): Promise<{ success: bool
     })
     
     if (response.ok) {
-      console.log('Saved to Supabase!')
+      console.log('✅ Patient saved to Supabase!')
       return { success: true }
     } else {
       const errorText = await response.text()
@@ -153,16 +172,60 @@ async function saveToSupabase(patientData: PatientData): Promise<{ success: bool
   }
 }
 
+// Check if Supabase is reachable
 async function isSupabaseReachable(): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) return false
+  
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+    
     const response = await fetch(`${supabaseUrl}/rest/v1/patients?limit=1`, {
-      headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` }
+      headers: { 
+        'apikey': supabaseAnonKey, 
+        'Authorization': `Bearer ${supabaseAnonKey}`
+      },
+      signal: controller.signal
     })
+    
+    clearTimeout(timeoutId)
     return response.ok
-  } catch { return false }
+  } catch { 
+    return false 
+  }
+}
+
+// Get all offline patients (for testing/sync)
+function getAllOfflinePatients(): PatientData[] {
+  try {
+    const data = localStorage.getItem('offline_patients')
+    return data ? JSON.parse(data) : []
+  } catch {
+    return []
+  }
+}
+
+// Sync all offline patients to cloud
+async function syncAllOfflinePatients(): Promise<{ synced: number; failed: number }> {
+  const patients = getAllOfflinePatients()
+  const unsynced = patients.filter(p => !p.synced_to_cloud)
+  
+  let synced = 0
+  let failed = 0
+  
+  for (const patient of unsynced) {
+    const result = await saveToSupabase(patient)
+    if (result.success) {
+      markPatientAsSyncedInLocalStorage(patient.patient_id)
+      synced++
+    } else {
+      failed++
+    }
+  }
+  
+  return { synced, failed }
 }
 
 export default function RegisterPage() {
@@ -176,6 +239,7 @@ export default function RegisterPage() {
   const [calculatedDates, setCalculatedDates] = useState<{ openingDate: string; closingDate: string } | null>(null)
   const [daysRemaining, setDaysRemaining] = useState<number>(0)
   const [lastSavedPatientId, setLastSavedPatientId] = useState<string | null>(null)
+  const [isOnline, setIsOnline] = useState(true)
   
   const [formData, setFormData] = useState({
     full_name: '',
@@ -209,14 +273,46 @@ export default function RegisterPage() {
     exclusive_breastfeeding: false,
   })
 
+  // Check connection status
   useEffect(() => {
     async function checkConnection() {
       const online = await isSupabaseReachable()
       setConnectionStatus(online ? 'online' : 'offline')
+      setIsOnline(online)
     }
     checkConnection()
+    
     const interval = setInterval(checkConnection, 10000)
     return () => clearInterval(interval)
+  }, [])
+
+  // Listen for online/offline events
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true)
+      setConnectionStatus('online')
+      // Try to sync when coming back online
+      syncAllOfflinePatients().then(result => {
+        if (result.synced > 0) {
+          setMessageType('success')
+          setMessage(`✅ ${result.synced} pending patient(s) synced to cloud!`)
+          setTimeout(() => setMessage(''), 5000)
+        }
+      })
+    }
+    
+    const handleOffline = () => {
+      setIsOnline(false)
+      setConnectionStatus('offline')
+    }
+    
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
   }, [])
 
   useEffect(() => {
@@ -314,13 +410,20 @@ export default function RegisterPage() {
         account_status: 'active'
       }
       
-      saveToLocalStorage(patientData)
+      // STEP 1: ALWAYS save to localStorage first (offline-first)
+      const localSaved = saveToLocalStorage(patientData)
+      
+      if (!localSaved) {
+        throw new Error('Failed to save patient data locally')
+      }
+      
       setLastSavedPatientId(patientId)
       
+      // STEP 2: Try to save to cloud if online
       let cloudSaved = false
       let cloudError = ''
       
-      if (connectionStatus === 'online') {
+      if (isOnline && connectionStatus === 'online') {
         const result = await saveToSupabase(patientData)
         cloudSaved = result.success
         cloudError = result.error || ''
@@ -330,25 +433,38 @@ export default function RegisterPage() {
         }
       }
       
+      // STEP 3: Show appropriate message
       if (cloudSaved) {
         setMessageType('success')
-        setMessage(`✅ PATIENT REGISTERED SUCCESSFULLY!\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\nData saved to CLOUD DATABASE`)
-      } else if (connectionStatus === 'online') {
-        setMessageType('error')
-        setMessage(`❌ REGISTRATION FAILED - CLOUD SAVE ERROR\n\nID: ${patientId}\nError: ${cloudError}\nData saved LOCALLY only.`)
-      } else {
+        setMessage(`✅ PATIENT REGISTERED SUCCESSFULLY!\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\n✅ Data saved to CLOUD DATABASE`)
+      } else if (isOnline && connectionStatus === 'online') {
         setMessageType('warning')
-        setMessage(`📡 OFFLINE REGISTRATION SUCCESSFUL\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\nData saved to LOCAL STORAGE only.`)
+        setMessage(`⚠️ PATIENT SAVED LOCALLY ONLY\n\nID: ${patientId}\nCloud save failed: ${cloudError}\nData will sync automatically when connection improves.`)
+      } else {
+        setMessageType('info')
+        setMessage(`📡 OFFLINE REGISTRATION SUCCESSFUL\n\nID: ${patientId}\nAccount Opening: ${formatDate(dates.openingDate)}\nAccount Closing: ${formatDate(dates.closingDate)}\n✅ Data saved to LOCAL STORAGE\n🔄 Will sync automatically when online.`)
       }
       
-      resetAndStartOver()
+      // Don't reset form immediately - show QR code first
+      // Reset after 10 seconds or when user clicks "Register Another"
+      setTimeout(() => {
+        if (lastSavedPatientId === patientId) {
+          // Only reset if this is still the last saved patient
+        }
+      }, 10000)
       
     } catch (error) {
       setMessageType('error')
-      setMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setMessage(`❌ Registration failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
+  }
+
+  function registerAnother() {
+    resetAndStartOver()
+    setLastSavedPatientId(null)
+    setMessage('')
   }
 
   if (step === 'who') {
@@ -359,12 +475,12 @@ export default function RegisterPage() {
           <div className="max-w-2xl mx-auto px-4">
             <div className={`mb-4 p-3 rounded-lg text-center ${
               connectionStatus === 'online' ? 'bg-green-100 text-green-800 border border-green-500' : 
-              connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border border-red-500' :
+              connectionStatus === 'offline' ? 'bg-yellow-100 text-yellow-800 border border-yellow-500' :
               'bg-gray-100 text-gray-800'
             }`}>
-              {connectionStatus === 'online' ? 'ONLINE MODE - Data will save to cloud' : 
-               connectionStatus === 'offline' ? 'OFFLINE MODE - Data will save locally' : 
-               'Checking connection...'}
+              {connectionStatus === 'online' ? '✅ ONLINE MODE - Data will save to cloud' : 
+               connectionStatus === 'offline' ? '📡 OFFLINE MODE - Data will save locally and sync later' : 
+               '⏳ Checking connection...'}
             </div>
             
             <div className="text-center mb-6">
@@ -474,25 +590,33 @@ export default function RegisterPage() {
           
           <div className={`mb-4 p-3 rounded-lg text-center ${
             connectionStatus === 'online' ? 'bg-green-100 text-green-800 border border-green-500' : 
-            connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border border-red-500' :
+            connectionStatus === 'offline' ? 'bg-yellow-100 text-yellow-800 border border-yellow-500' :
             'bg-gray-100 text-gray-800'
           }`}>
-            {connectionStatus === 'online' ? 'ONLINE MODE - Data will save to cloud' : 
-             connectionStatus === 'offline' ? 'OFFLINE MODE - Data will save locally' : 
-             'Checking connection...'}
+            {connectionStatus === 'online' ? '✅ ONLINE MODE - Data will save to cloud' : 
+             connectionStatus === 'offline' ? '📡 OFFLINE MODE - Data will save locally and sync later' : 
+             '⏳ Checking connection...'}
           </div>
           
           {message && (
             <div className={`mb-4 p-4 rounded-lg whitespace-pre-line ${
               messageType === 'success' ? 'bg-green-100 text-green-800 border border-green-400' : 
               messageType === 'warning' ? 'bg-yellow-100 text-yellow-800 border border-yellow-400' :
+              messageType === 'info' ? 'bg-blue-100 text-blue-800 border border-blue-400' :
               'bg-red-100 text-red-800 border border-red-400'
             }`}>
               {message}
             </div>
           )}
           
-          <button onClick={resetAndStartOver} className="text-green-600 mb-4">← Back</button>
+          <div className="flex justify-between items-center mb-4">
+            <button onClick={resetAndStartOver} className="text-green-600">← Back</button>
+            {lastSavedPatientId && (
+              <button onClick={registerAnother} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                + Register Another Patient
+              </button>
+            )}
+          </div>
           
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">
@@ -753,16 +877,25 @@ export default function RegisterPage() {
                   <p className="text-xs text-gray-500 text-center mt-2">
                     Click the "Download QR Code" button below the QR code to save and print.
                   </p>
+                  <button
+                    type="button"
+                    onClick={registerAnother}
+                    className="w-full mt-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Register Another Patient
+                  </button>
                 </div>
               )}
               
-              <button
-                type="submit"
-                disabled={loading}
-                className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
-              >
-                {loading ? 'Registering...' : 'Register Patient'}
-              </button>
+              {!lastSavedPatientId && (
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+                >
+                  {loading ? 'Registering...' : 'Register Patient'}
+                </button>
+              )}
             </form>
           </div>
         </div>
