@@ -159,6 +159,7 @@ export default function EmergencyPage() {
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-6xl mx-auto px-4">
 
+          {/* Header */}
           <div className="text-center mb-6">
             <h1 className="text-3xl font-bold text-red-700">🚨 Emergency Contacts</h1>
             <p className="text-gray-600">Life-saving numbers always available offline</p>
@@ -170,9 +171,9 @@ export default function EmergencyPage() {
             )}
           </div>
 
-          {/* Search and Filters */}
+          {/* Search and Filters - WITH VISIBLE MAP BUTTON */}
           <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <input
                 type="text"
                 placeholder="🔍 Search by name..."
@@ -198,21 +199,29 @@ export default function EmergencyPage() {
                   <option key={cat.value} value={cat.value}>{cat.icon} {cat.label}</option>
                 ))}
               </select>
+              {/* VISIBLE MAP BUTTON - GREEN BUTTON */}
               <button
                 onClick={() => setShowMap(!showMap)}
-                className={`px-4 py-2 rounded-lg transition flex items-center justify-center gap-2 ${
-                  showMap ? 'bg-red-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2 font-semibold"
               >
-                <span>🗺️</span> {showMap ? 'Hide Map' : 'Show Map'}
+                <span className="text-xl">🗺️</span>
+                {showMap ? 'Hide Map' : 'Show Facilities Map'}
               </button>
             </div>
           </div>
 
           {/* Map Section - Toggleable */}
           {showMap && (
-            <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-              <h2 className="text-lg font-bold mb-3">🗺️ Facilities by District</h2>
+            <div className="bg-white rounded-lg shadow-md p-4 mb-6 border-2 border-green-500">
+              <div className="flex justify-between items-center mb-3">
+                <h2 className="text-lg font-bold text-green-700">🗺️ Facilities by District</h2>
+                <button
+                  onClick={() => setShowMap(false)}
+                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
+                >
+                  ✕ Close Map
+                </button>
+              </div>
               <SimpleMap facilities={facilitiesForMap} />
               <p className="text-xs text-gray-500 text-center mt-3">
                 📍 Showing {facilitiesForMap.length} facilities grouped by district
