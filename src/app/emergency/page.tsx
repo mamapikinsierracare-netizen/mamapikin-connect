@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
+import SimpleMap from '@/components/SimpleMap';
 
 // All data is defined inside this file – no external imports needed
 type EmergencyContact = {
@@ -14,6 +15,8 @@ type EmergencyContact = {
   operatingHours?: string;
   hasAmbulance?: boolean;
   hasEmergency?: boolean;
+  latitude?: number;
+  longitude?: number;
 };
 
 // National emergency contacts
@@ -114,6 +117,7 @@ export default function EmergencyPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline'>('online');
+  const [showMap, setShowMap] = useState<boolean>(false);
 
   useEffect(() => {
     const handleOffline = () => setConnectionStatus('offline');
@@ -146,6 +150,9 @@ export default function EmergencyPage() {
   const totalPoliceStations = allContacts.filter(c => c.category === 'police').length;
   const totalAmbulance = allContacts.filter(c => c.category === 'ambulance').length;
 
+  // Get facilities with districts for map
+  const facilitiesForMap = allContacts.filter(c => c.district);
+
   return (
     <>
       <Navigation />
@@ -165,7 +172,7 @@ export default function EmergencyPage() {
 
           {/* Search and Filters */}
           <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <input
                 type="text"
                 placeholder="🔍 Search by name..."
@@ -191,8 +198,27 @@ export default function EmergencyPage() {
                   <option key={cat.value} value={cat.value}>{cat.icon} {cat.label}</option>
                 ))}
               </select>
+              <button
+                onClick={() => setShowMap(!showMap)}
+                className={`px-4 py-2 rounded-lg transition flex items-center justify-center gap-2 ${
+                  showMap ? 'bg-red-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                <span>🗺️</span> {showMap ? 'Hide Map' : 'Show Map'}
+              </button>
             </div>
           </div>
+
+          {/* Map Section - Toggleable */}
+          {showMap && (
+            <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+              <h2 className="text-lg font-bold mb-3">🗺️ Facilities by District</h2>
+              <SimpleMap facilities={facilitiesForMap} />
+              <p className="text-xs text-gray-500 text-center mt-3">
+                📍 Showing {facilitiesForMap.length} facilities grouped by district
+              </p>
+            </div>
+          )}
 
           {/* Stats Summary */}
           <div className="bg-white rounded-lg shadow-md p-4 mb-6">
