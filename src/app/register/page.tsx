@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import QRCode from '@/components/QRCode'
 
 type PatientData = {
   patient_id: string
@@ -174,6 +175,7 @@ export default function RegisterPage() {
   const [messageType, setMessageType] = useState('success')
   const [calculatedDates, setCalculatedDates] = useState<{ openingDate: string; closingDate: string } | null>(null)
   const [daysRemaining, setDaysRemaining] = useState<number>(0)
+  const [lastSavedPatientId, setLastSavedPatientId] = useState<string | null>(null)
   
   const [formData, setFormData] = useState({
     full_name: '',
@@ -248,6 +250,7 @@ export default function RegisterPage() {
     setRegistrationType(null)
     setPatientType(null)
     setCalculatedDates(null)
+    setLastSavedPatientId(null)
     setFormData({
       full_name: '', date_of_birth: '', phone: '', village: '', district: '',
       blood_group: '', allergies: '', guardian_name: '', guardian_phone: '',
@@ -264,6 +267,7 @@ export default function RegisterPage() {
     e.preventDefault()
     setLoading(true)
     setMessage('')
+    setLastSavedPatientId(null)
     
     try {
       const patientId = generatePatientId()
@@ -311,6 +315,7 @@ export default function RegisterPage() {
       }
       
       saveToLocalStorage(patientData)
+      setLastSavedPatientId(patientId)
       
       let cloudSaved = false
       let cloudError = ''
@@ -726,6 +731,28 @@ export default function RegisterPage() {
                       <input type="number" step="0.1" name="birth_length" value={formData.birth_length} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
                     </div>
                   </div>
+                </div>
+              )}
+              
+              {/* QR Code Display - Shows after successful registration */}
+              {lastSavedPatientId && (
+                <div className="mt-6 p-4 border-2 border-green-500 rounded-lg bg-green-50">
+                  <h3 className="text-lg font-bold text-green-700 mb-3 text-center">
+                    ✅ PATIENT REGISTERED SUCCESSFULLY
+                  </h3>
+                  <p className="text-center text-gray-600 mb-3">
+                    Patient ID: <strong className="text-green-700">{lastSavedPatientId}</strong>
+                  </p>
+                  <div className="flex justify-center">
+                    <QRCode value={lastSavedPatientId} size={200} />
+                  </div>
+                  <p className="text-sm text-gray-600 text-center mt-3">
+                    📱 <strong>Give this QR code to the patient</strong><br />
+                    They can scan it at future visits for faster registration.
+                  </p>
+                  <p className="text-xs text-gray-500 text-center mt-2">
+                    Click the "Download QR Code" button below the QR code to save and print.
+                  </p>
                 </div>
               )}
               

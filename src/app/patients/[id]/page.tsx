@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Navigation from '@/components/Navigation'
+import { QRCodeSVG } from 'qrcode.react'
 
 type Patient = {
   id?: number
@@ -256,6 +257,29 @@ function getDaysRemaining(closingDate: string): number {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
 }
 
+function downloadQRCode(patientId: string) {
+  const svg = document.querySelector('#qr-code-container svg')
+  if (!svg) return
+  
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  const serializer = new XMLSerializer()
+  const svgString = serializer.serializeToString(svg)
+  const img = new Image()
+  
+  img.onload = () => {
+    canvas.width = img.width
+    canvas.height = img.height
+    ctx?.drawImage(img, 0, 0)
+    const link = document.createElement('a')
+    link.download = `QR-${patientId}.png`
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+  }
+  
+  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)))
+}
+
 export default function PatientDetailPage() {
   const params = useParams()
   const patientId = params.id as string
@@ -459,20 +483,66 @@ export default function PatientDetailPage() {
                 </div>
               </div>
               
-              {/* Family Information */}
-<div className="bg-white rounded-lg shadow-md p-6">
-  <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">👨‍👩‍👧‍👦 Family Information</h2>
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div><span className="text-gray-500">Husband/Partner Name:</span> <span className="font-medium">{patient.husband_name || 'Not provided'}</span></div>
-    <div><span className="text-gray-500">Husband/Partner Phone:</span> <span className="font-medium">{patient.husband_phone || 'Not provided'}</span></div>
-    <div><span className="text-gray-500">Husband/Partner Occupation:</span> <span className="font-medium">{patient.husband_occupation || 'Not provided'}</span></div>
-    <div><span className="text-gray-500">Father&apos;s Name:</span> <span className="font-medium">{patient.father_name || 'Not provided'}</span></div>
-    <div><span className="text-gray-500">Father&apos;s Phone:</span> <span className="font-medium">{patient.father_phone || 'Not provided'}</span></div>
-    <div><span className="text-gray-500">Father&apos;s Location:</span> <span className="font-medium">{patient.father_location || 'Not provided'}</span></div>
-  </div>
-</div>
+              {/* QR Code Card */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📱 Emergency QR Code</h2>
+                <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
+                  <div id="qr-code-container" className="bg-gray-50 p-4 rounded-lg">
+                    <QRCodeSVG 
+                      value={JSON.stringify({
+                        patient_id: patient.patient_id,
+                        full_name: patient.full_name,
+                        phone: patient.phone,
+                        blood_group: patient.blood_group,
+                        allergies: patient.allergies,
+                        emergency_contact: patient.next_of_kin_name,
+                        emergency_phone: patient.next_of_kin_phone,
+                        village: patient.village,
+                        district: patient.district
+                      })}
+                      size={180}
+                      level="H"
+                      includeMargin={true}
+                    />
+                  </div>
+                  <div className="flex-1 text-center md:text-left">
+                    <p className="text-sm text-gray-600 mb-2">
+                      🔐 <strong>Emergency Access QR Code</strong>
+                    </p>
+                    <p className="text-sm text-gray-600 mb-2">
+                      Scan this QR code for immediate access to patient information during emergencies.
+                    </p>
+                    <p className="text-xs text-gray-500 mb-4">
+                      Any health facility can scan this code to retrieve critical patient data including:
+                      allergies, blood group, emergency contacts, and medical history.
+                    </p>
+                    <button 
+                      onClick={() => downloadQRCode(patient.patient_id)}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center gap-2 mx-auto md:mx-0"
+                    >
+                      📥 Download QR Code as PNG
+                    </button>
+                    <p className="text-xs text-gray-400 mt-3">
+                      Print this code and give to the patient to keep in their wallet or phone case.
+                    </p>
+                  </div>
+                </div>
+              </div>
               
-              {/* Next of Kin */}
+              {/* Family Information */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">👨‍👩‍👧‍👦 Family Information</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><span className="text-gray-500">Husband/Partner Name:</span> <span className="font-medium">{patient.husband_name || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Husband/Partner Phone:</span> <span className="font-medium">{patient.husband_phone || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Husband/Partner Occupation:</span> <span className="font-medium">{patient.husband_occupation || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Father&apos;s Name:</span> <span className="font-medium">{patient.father_name || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Father&apos;s Phone:</span> <span className="font-medium">{patient.father_phone || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Father&apos;s Location:</span> <span className="font-medium">{patient.father_location || 'Not provided'}</span></div>
+                </div>
+              </div>
+              
+              {/* Next of Kin / Emergency Contact */}
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📞 Emergency Contact</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -492,8 +562,8 @@ export default function PatientDetailPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><span className="text-gray-500">Expected Delivery Date (EDD):</span> <span className="font-medium">{formatDate(patient.edd)}</span></div>
                     <div><span className="text-gray-500">Gestational Age:</span> <span className="font-medium">{patient.gestational_age ? `${patient.gestational_age} weeks` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Gravida:</span> <span className="font-medium">{patient.gravida || 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Para:</span> <span className="font-medium">{patient.para || 'Not recorded'}</span></div>
+                    <div><span className="text-gray-500">Gravida (total pregnancies):</span> <span className="font-medium">{patient.gravida || 'Not recorded'}</span></div>
+                    <div><span className="text-gray-500">Para (live births):</span> <span className="font-medium">{patient.para || 'Not recorded'}</span></div>
                   </div>
                 </div>
               )}
@@ -505,7 +575,8 @@ export default function PatientDetailPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><span className="text-gray-500">Last Delivery Date:</span> <span className="font-medium">{formatDate(patient.last_delivery_date)}</span></div>
                     <div><span className="text-gray-500">Baby Birth Weight:</span> <span className="font-medium">{patient.birth_weight ? `${patient.birth_weight} kg` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Exclusive Breastfeeding:</span> <span className="font-medium">{patient.exclusive_breastfeeding ? 'Yes' : 'No'}</span></div>
+                    <div><span className="text-gray-500">Baby Birth Length:</span> <span className="font-medium">{patient.birth_length ? `${patient.birth_length} cm` : 'Not recorded'}</span></div>
+                    <div><span className="text-gray-500">Exclusive Breastfeeding:</span> <span className="font-medium">{patient.exclusive_breastfeeding ? '✅ Yes' : '❌ No'}</span></div>
                   </div>
                 </div>
               )}
@@ -517,6 +588,8 @@ export default function PatientDetailPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><span className="text-gray-500">Birth Weight:</span> <span className="font-medium">{patient.birth_weight ? `${patient.birth_weight} kg` : 'Not recorded'}</span></div>
                     <div><span className="text-gray-500">Birth Length:</span> <span className="font-medium">{patient.birth_length ? `${patient.birth_length} cm` : 'Not recorded'}</span></div>
+                    <div><span className="text-gray-500">Guardian Name:</span> <span className="font-medium">{patient.guardian_name || 'Not recorded'}</span></div>
+                    <div><span className="text-gray-500">Guardian Phone:</span> <span className="font-medium">{patient.guardian_phone || 'Not recorded'}</span></div>
                   </div>
                 </div>
               )}
@@ -529,7 +602,7 @@ export default function PatientDetailPage() {
               {ancVisits.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <p>No ANC visits recorded.</p>
-                  <Link href={`/anc`} className="text-green-600 underline mt-2 inline-block">Record first ANC visit →</Link>
+                  <Link href={`/anc?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record first ANC visit →</Link>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -570,7 +643,7 @@ export default function PatientDetailPage() {
               {deliveries.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <p>No delivery records found.</p>
-                  <Link href={`/delivery`} className="text-green-600 underline mt-2 inline-block">Record delivery →</Link>
+                  <Link href={`/delivery?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record delivery →</Link>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -609,7 +682,7 @@ export default function PatientDetailPage() {
               {pncVisits.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <p>No PNC visits recorded.</p>
-                  <Link href={`/pnc`} className="text-green-600 underline mt-2 inline-block">Record first PNC visit →</Link>
+                  <Link href={`/pnc?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record first PNC visit →</Link>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -648,7 +721,7 @@ export default function PatientDetailPage() {
               {immunisations.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <p>No immunisation records found.</p>
-                  <Link href={`/immunisation`} className="text-green-600 underline mt-2 inline-block">Record immunisation →</Link>
+                  <Link href={`/immunisation?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record immunisation →</Link>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
