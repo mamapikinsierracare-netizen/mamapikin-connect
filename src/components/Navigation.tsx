@@ -37,12 +37,15 @@ export default function Navigation() {
     { name: 'Patient Portal', path: '/portal', icon: '👤' },
     { name: 'Emergency Access', path: '/verify-token', icon: '🚨' },
     { name: 'Emergency', path: '/emergency', icon: '🚨' },
-{ name: 'Facilities', path: '/maps', icon: '📍' },
-{ name: 'Health Guides', path: '/guides', icon: '📚' },
+    { name: 'Facilities', path: '/maps', icon: '📍' },
+    { name: 'Health Guides', path: '/guides', icon: '📚' },
     { name: 'Analytics', path: '/analytics', icon: '📊' },
     { name: 'User Management', path: '/admin/users', icon: '👥' },
-    { name: 'DHIS2 Export', path: '/admin/dhis2', icon: '📤' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
+    { name: 'Referrals', path: '/referral', icon: '🔄' },
+    { name: 'Blood Bank', path: '/blood-bank', icon: '🩸' },
+    { name: 'SMS Queue', path: '/sms-queue', icon: '📱' },
+    { name: 'DHIS2 Export', path: '/dhis2-export', icon: '📤' },
   ]
   
   useEffect(() => {
