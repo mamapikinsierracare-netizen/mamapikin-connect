@@ -34,7 +34,8 @@ function CommunityDashboard() {
     async function loadDashboardData() {
       try {
         // Dynamically import Dexie to avoid server-side issues
-        const { default: db } = await import('@/lib/offlineService');
+        const module = await import('@/lib/offlineService');
+const db = (module as any).default || (module as any).db || {};
 
         // Get pending sync queue count
         const pending = await db.syncQueue.where('status').equals('pending').count();
@@ -201,10 +202,10 @@ function AdminDashboard() {
 // MAIN HOME PAGE COMPONENT
 // ============================================
 export default function HomePage() {
-  const { user, isAdmin, isLoading } = useRBAC();
+  const { user, isAdmin, loading } = useRBAC();
 
   // Show loading while auth is being resolved
-  if (isLoading) {
+  if (loading) {
     return (
       <>
         <Navigation />
