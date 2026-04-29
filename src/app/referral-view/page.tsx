@@ -1,6 +1,6 @@
 // src/app/referral-view/page.tsx
 'use client';
-
+export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase'; // adjust import to your supabase client
 import { useSearchParams } from 'next/navigation';
