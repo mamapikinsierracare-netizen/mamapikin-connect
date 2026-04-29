@@ -83,7 +83,7 @@ async function getPatients(): Promise<Patient[]> {
 
 async function getPatientDetails(patientId: string): Promise<PatientDetails | null> {
   try {
-    const localPatient = await commDB.patients.get(patientId);
+    const localPatient = await (commDB as any).patients.get(patientId);
     if (localPatient) {
       return {
         patient_id: localPatient.id,
