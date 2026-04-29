@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import OfflineStatus from '@/components/OfflineStatus'
@@ -9,12 +9,19 @@ export const metadata: Metadata = {
   title: 'MamaPikin Connect - Maternal & Child Health System',
   description: 'Digital health system for mothers and children in Sierra Leone',
   manifest: '/manifest.json',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
     title: 'MamaPikin',
   },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,        // ✅ boolean, not 'yes' or 'no'
+  // Other optional viewport properties can be added here
 }
 
 export default function RootLayout({
