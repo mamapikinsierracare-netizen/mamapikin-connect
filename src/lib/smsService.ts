@@ -19,6 +19,7 @@ export interface ReferralAlert {
   referralCode: string;
   reason: string;
   urgency: 'routine' | 'urgent' | 'emergency';
+  historyLink?: string;   // ✅ NEW - optional patient history link
 }
 
 class SMSService {
@@ -81,7 +82,14 @@ class SMSService {
 
   async sendReferralAlert(alert: ReferralAlert): Promise<boolean> {
     const urgencyEmoji = alert.urgency === 'emergency' ? '🚨' : alert.urgency === 'urgent' ? '⚠️' : '📋';
-    const message = `${urgencyEmoji} REFERRAL NOTIFICATION ${urgencyEmoji}\n\nPatient: ${alert.patientName} (${alert.patientId})\nFrom: ${alert.fromFacility}\nTo: ${alert.toFacility}\nCode: ${alert.referralCode}\nReason: ${alert.reason}\nUrgency: ${alert.urgency.toUpperCase()}\n\nPlease confirm receipt.`;
+    let message = `${urgencyEmoji} REFERRAL NOTIFICATION ${urgencyEmoji}\n\nPatient: ${alert.patientName} (${alert.patientId})\nFrom: ${alert.fromFacility}\nTo: ${alert.toFacility}\nCode: ${alert.referralCode}\nReason: ${alert.reason}\nUrgency: ${alert.urgency.toUpperCase()}`;
+    
+    // ✅ Append history link if provided
+    if (alert.historyLink) {
+      message += `\n\n🔗 Patient clinical history:\n${alert.historyLink}`;
+    }
+    
+    message += `\n\nPlease confirm receipt.`;
 
     if (!this.isOnline) {
       this.addToQueue({ type: 'referral', alert, message });
@@ -131,3 +139,18 @@ class SMSService {
 }
 
 export const smsService = new SMSService();
+
+// Simple SMS sender for generic messages (used by messagingService)
+export async function sendSMS(phoneNumber: string, message: string): Promise<boolean> {
+  const dummyAlert = {
+    patientName: 'System',
+    patientId: 'SYS',
+    patientPhone: phoneNumber,
+    dangerSigns: [message],
+    gestationalAge: undefined,
+    facilityName: 'System',
+    chwName: 'Auto',
+    recordedAt: new Date()
+  };
+  return await smsService.sendDangerSignAlert(dummyAlert as any);
+}

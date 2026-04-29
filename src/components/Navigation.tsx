@@ -1,4 +1,3 @@
-// src/components/Navigation.tsx
 'use client'
 
 import Image from 'next/image'
@@ -43,9 +42,12 @@ export default function Navigation() {
     { name: 'User Management', path: '/admin/users', icon: '👥' },
     { name: 'Immunisation', path: '/immunisation', icon: '💉' },
     { name: 'Referrals', path: '/referral', icon: '🔄' },
+    { name: 'Referral Inbox', path: '/referral-inbox', icon: '📥' },
     { name: 'Blood Bank', path: '/blood-bank', icon: '🩸' },
     { name: 'SMS Queue', path: '/sms-queue', icon: '📱' },
     { name: 'DHIS2 Export', path: '/dhis2-export', icon: '📤' },
+    { name: 'Request Facility', path: '/facility-request', icon: '🏥' },
+{ name: 'Facility Requests (Admin)', path: '/admin/facility-requests', icon: '✅' },
   ]
   
   useEffect(() => {

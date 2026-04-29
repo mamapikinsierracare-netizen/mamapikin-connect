@@ -29,7 +29,15 @@ export default function LoginPage() {
       setError(signInError.message)
       setLoading(false)
     } else if (data?.user) {
-      console.log('Login successful, redirecting...')
+      console.log('Login successful, setting facility context...')
+      // Tell the database which facility this user belongs to
+      try {
+        await supabase.rpc('set_app_facility')
+        console.log('Facility context set successfully')
+      } catch (err) {
+        console.error('Failed to set facility context:', err)
+        // Continue anyway - the app will still work but RLS may restrict some data
+      }
       // Force redirect using multiple methods for reliability
       setTimeout(() => {
         window.location.href = '/'

@@ -9,6 +9,9 @@ import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import { useRBAC } from '@/hooks/useRBAC';
 import { supabase } from '@/lib/supabase';
+import DataImport from '@/components/Admin/DataImport';
+import RemoteWipe from '@/components/Admin/RemoteWipe';
+import RemoteWipeGuard from '@/components/RemoteWipeGuard';  // <-- ADDED
 
 // Simple loading component for slow connections
 function LoadingSpinner() {
@@ -35,20 +38,20 @@ function CommunityDashboard() {
       try {
         // Dynamically import Dexie to avoid server-side issues
         const module = await import('@/lib/offlineService');
-const db = (module as any).default || (module as any).db || {};
+        const db = (module as any).default || (module as any).db || {};
 
         // Get pending sync queue count
-        const pending = await db.syncQueue.where('status').equals('pending').count();
+        const pending = await db.syncQueue?.where('status').equals('pending').count() || 0;
         setPendingSyncCount(pending);
 
         // Get recent patients (last 7 days) from local DB
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
         const patients = await db.patients
-          .where('registered_at')
+          ?.where('registered_at')
           .above(sevenDaysAgo.toISOString())
           .limit(5)
-          .toArray();
+          .toArray() || [];
         setRecentPatients(patients);
 
         // Get today's appointments (if scheduler table exists)
@@ -143,7 +146,7 @@ const db = (module as any).default || (module as any).db || {};
 }
 
 // ============================================
-// Admin quick summary (optional – can redirect to /analytics)
+// Admin quick summary (including Bulk Data Import)
 // ============================================
 function AdminDashboard() {
   const [stats, setStats] = useState({ patients: 0, anc: 0, deliveries: 0 });
@@ -152,14 +155,14 @@ function AdminDashboard() {
   useEffect(() => {
     async function fetchSummary() {
       try {
-        // Example: fetch counts from Supabase (real data)
-        const { data: patients } = await supabase.from('patients').select('id', { count: 'exact', head: true });
-        const { data: anc } = await supabase.from('anc_visits').select('id', { count: 'exact', head: true });
-        const { data: deliveries } = await supabase.from('deliveries').select('id', { count: 'exact', head: true });
+        // Use count method correctly
+        const { count: patientsCount } = await supabase.from('patients').select('*', { count: 'exact', head: true });
+        const { count: ancCount } = await supabase.from('anc_visits').select('*', { count: 'exact', head: true });
+        const { count: deliveriesCount } = await supabase.from('deliveries').select('*', { count: 'exact', head: true });
         setStats({
-          patients: patients?.length || 0,
-          anc: anc?.length || 0,
-          deliveries: deliveries?.length || 0,
+          patients: patientsCount || 0,
+          anc: ancCount || 0,
+          deliveries: deliveriesCount || 0,
         });
       } catch (error) {
         console.error('Failed to load summary stats', error);
@@ -175,6 +178,8 @@ function AdminDashboard() {
   return (
     <div className="p-4 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-4 text-green-800">Admin Dashboard</h1>
+      
+      {/* Stats cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white p-4 rounded shadow text-center">
           <div className="text-3xl font-bold text-green-700">{stats.patients}</div>
@@ -189,7 +194,18 @@ function AdminDashboard() {
           <div className="text-gray-500">Deliveries</div>
         </div>
       </div>
-      <div className="text-center">
+
+      {/* 👇👇👇 BULK DATA IMPORT SECTION (ADDED) 👇👇👇 */}
+      <div className="mt-6 border-t pt-4">
+        <h2 className="text-xl font-semibold mb-2">📂 Bulk Data Import (Admin)</h2>
+        <DataImport />
+      </div>
+      {/* 👆👆👆 END OF IMPORT SECTION 👆👆👆 */}
+      {/* Remote Wipe Section */}
+      <RemoteWipe />
+
+      {/* Analytics link */}
+      <div className="text-center mt-6">
         <Link href="/analytics" className="bg-green-600 text-white px-6 py-3 rounded-lg text-lg font-semibold hover:bg-green-700">
           📊 Open Full Analytics Dashboard →
         </Link>
@@ -203,6 +219,10 @@ function AdminDashboard() {
 // ============================================
 export default function HomePage() {
   const { user, isAdmin, loading } = useRBAC();
+
+  console.log('🔍 [DEBUG] user:', user);
+  console.log('🔍 [DEBUG] user?.role:', user?.role);
+  console.log('🔍 [DEBUG] isAdmin():', isAdmin());
 
   // Show loading while auth is being resolved
   if (loading) {
@@ -229,9 +249,11 @@ export default function HomePage() {
 
   const userIsAdmin = isAdmin(); // Uses your RBAC hook logic
 
+  // MODIFIED RETURN: Added RemoteWipeGuard right after Navigation
   return (
     <>
       <Navigation />
+      <RemoteWipeGuard />
       <div className="min-h-screen bg-gray-50 py-4">
         {userIsAdmin ? <AdminDashboard /> : <CommunityDashboard />}
       </div>

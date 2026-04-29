@@ -1,5 +1,6 @@
 // src/hooks/useRBAC.ts
-import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 export type UserRole = 
   | 'MASTER_ADMIN'
@@ -86,9 +87,17 @@ export const roleDisplayNames: Record<UserRole, string> = {
   'VIEWER': 'Viewer (Read-Only)'
 }
 
-// Permission definitions
+// Helper to convert string role to UserRole type
+function toUserRole(roleStr: string): UserRole {
+  if (roleHierarchy.hasOwnProperty(roleStr)) {
+    return roleStr as UserRole;
+  }
+  // Default to CHW if unknown
+  return 'CHW';
+}
+
+// Permission definitions (same as before, keep as is)
 const permissions = {
-  // ========== ADMINISTRATION ==========
   canManageUsers: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(role)
   },
@@ -101,13 +110,11 @@ const permissions = {
   canAssignRoles: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(role)
   },
-  
-  // ========== PATIENT MANAGEMENT ==========
   canRegisterPatient: (role: UserRole): boolean => {
-    return roleHierarchy[role] >= 40 // DATA_ENTRY_OFFICER and above
+    return roleHierarchy[role] >= 40
   },
   canEditPatient: (role: UserRole): boolean => {
-    return roleHierarchy[role] >= 45 // DATA_ENTRY_OFFICER and above (with approval)
+    return roleHierarchy[role] >= 45
   },
   canEditPatientDirectly: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN', 'SENIOR_DOCTOR'].includes(role)
@@ -116,13 +123,11 @@ const permissions = {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(role)
   },
   canViewPatient: (role: UserRole): boolean => {
-    return roleHierarchy[role] >= 35 // CHW and above
+    return roleHierarchy[role] >= 35
   },
   canViewSensitiveData: (role: UserRole): boolean => {
-    return roleHierarchy[role] >= 50 // NURSE/MIDWIFE and above
+    return roleHierarchy[role] >= 50
   },
-  
-  // ========== APPROVAL WORKFLOW ==========
   canApproveRequests: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN', 'SENIOR_DOCTOR'].includes(role)
   },
@@ -132,8 +137,6 @@ const permissions = {
   canSubmitApprovalRequest: (role: UserRole): boolean => {
     return roleHierarchy[role] >= 40
   },
-  
-  // ========== CLINICAL MODULES ==========
   canRecordANC: (role: UserRole): boolean => {
     return ['NURSE', 'MIDWIFE', 'DOCTOR', 'SENIOR_DOCTOR', 'SENIOR_NURSE', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
@@ -146,8 +149,6 @@ const permissions = {
   canRecordImmunisation: (role: UserRole): boolean => {
     return ['NURSE', 'MIDWIFE', 'DOCTOR', 'CHO', 'CHW', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
-  
-  // ========== PHARMACY ==========
   canDispenseMedication: (role: UserRole): boolean => {
     return ['PHARMACIST', 'SENIOR_PHARMACIST', 'DOCTOR', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
@@ -157,8 +158,6 @@ const permissions = {
   canAccessControlledSubstances: (role: UserRole): boolean => {
     return ['SENIOR_PHARMACIST', 'DOCTOR', 'SENIOR_DOCTOR', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
-  
-  // ========== LABORATORY ==========
   canOrderLabTest: (role: UserRole): boolean => {
     return ['DOCTOR', 'SENIOR_DOCTOR', 'NURSE', 'MIDWIFE', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
@@ -168,8 +167,6 @@ const permissions = {
   canApproveLabResults: (role: UserRole): boolean => {
     return ['SENIOR_LAB_TECH', 'DOCTOR', 'SENIOR_DOCTOR', 'FACILITY_ADMIN', 'SYSTEM_ADMIN', 'SUPER_ADMIN', 'MASTER_ADMIN'].includes(role)
   },
-  
-  // ========== COMMUNITY HEALTH ==========
   canDoHomeVisits: (role: UserRole): boolean => {
     return ['CHO', 'CHW', 'NURSE', 'MIDWIFE'].includes(role)
   },
@@ -179,8 +176,6 @@ const permissions = {
   canTraceDefaulters: (role: UserRole): boolean => {
     return ['CHO', 'CHW', 'NURSE', 'DATA_ENTRY_OFFICER'].includes(role)
   },
-  
-  // ========== REPORTS & ANALYTICS ==========
   canViewReports: (role: UserRole): boolean => {
     return roleHierarchy[role] >= 45
   },
@@ -190,24 +185,18 @@ const permissions = {
   canViewAuditLog: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(role)
   },
-  
-  // ========== ACCOUNT MANAGEMENT ==========
   canCloseAccount: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(role)
   },
   canReactivateAccount: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(role)
   },
-  
-  // ========== SYSTEM CONFIGURATION ==========
   canConfigureSystem: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN'].includes(role)
   },
   canManageFacilities: (role: UserRole): boolean => {
     return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN'].includes(role)
   },
-  
-  // ========== PATIENT SELF-SERVICE ==========
   canViewOwnRecord: (role: UserRole): boolean => {
     return role === 'PATIENT'
   },
@@ -217,74 +206,102 @@ const permissions = {
 }
 
 export function useRBAC() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadUser = async () => {
-      const storedUser = localStorage.getItem('current_user')
-      if (storedUser) {
-        setUser(JSON.parse(storedUser))
-      } else {
-        // Default demo user - in production, this would come from login
-        const demoUser: User = {
-          id: 'demo-nurse-001',
-          email: 'nurse@mamapikin.com',
-          role: 'NURSE',
-          full_name: 'Mariama Koroma',
-          facility_code: 'KAB001',
-          facility_name: 'Kabala District Hospital',
-          district: 'Kabala',
-          district_name: 'Kabala District',
-          region: 'Northern',
-          employee_id: 'EMP001',
-          phone: '076123456',
-          is_active: true,
-          created_at: new Date().toISOString(),
-          created_by: 'system',
-          last_login: new Date().toISOString()
-        }
-        setUser(demoUser)
-        localStorage.setItem('current_user', JSON.stringify(demoUser))
+      setLoading(true);
+      
+      // Get the current Supabase session
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error || !session?.user) {
+        console.warn('No active session, user not logged in');
+        setUser(null);
+        setLoading(false);
+        return;
       }
-      setLoading(false)
-    }
-    loadUser()
-  }, [])
+      
+      const supabaseUser = session.user;
+      const metadata = supabaseUser.user_metadata || {};
+      const roleStr = metadata.role || 'CHW'; // Default to CHW if no role set
+      const role = toUserRole(roleStr);
+      
+      // Build the custom User object from auth data
+      const customUser: User = {
+        id: supabaseUser.id,
+        email: supabaseUser.email || '',
+        role: role,
+        full_name: metadata.full_name || metadata.name || supabaseUser.email?.split('@')[0] || 'User',
+        facility_code: metadata.facility_code || null,
+        facility_name: metadata.facility_name || null,
+        district: metadata.district || null,
+        district_name: metadata.district_name || null,
+        region: metadata.region || null,
+        employee_id: metadata.employee_id || null,
+        phone: metadata.phone || null,
+        is_active: true,
+        created_at: supabaseUser.created_at || new Date().toISOString(),
+        created_by: null,
+        last_login: supabaseUser.last_sign_in_at || new Date().toISOString()
+      };
+      
+      setUser(customUser);
+      setLoading(false);
+    };
+    
+    loadUser();
+    
+    // Optional: Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        // Reload user on auth change
+        loadUser();
+      } else {
+        setUser(null);
+        setLoading(false);
+      }
+    });
+    
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const hasPermission = (permissionName: keyof typeof permissions): boolean => {
-    if (!user) return false
-    return permissions[permissionName](user.role)
-  }
+    if (!user) return false;
+    return permissions[permissionName](user.role);
+  };
 
   const hasRoleLevel = (requiredLevel: number): boolean => {
-    if (!user) return false
-    return roleHierarchy[user.role] >= requiredLevel
-  }
+    if (!user) return false;
+    return roleHierarchy[user.role] >= requiredLevel;
+  };
 
   const isAtLeast = (role: UserRole): boolean => {
-    if (!user) return false
-    return roleHierarchy[user.role] >= roleHierarchy[role]
-  }
+    if (!user) return false;
+    return roleHierarchy[user.role] >= roleHierarchy[role];
+  };
 
   // Convenience methods
-  const canApprove = (): boolean => hasPermission('canApproveRequests')
-  const canEdit = (): boolean => hasPermission('canEditPatient')
-  const canEditDirectly = (): boolean => hasPermission('canEditPatientDirectly')
-  const canDelete = (): boolean => hasPermission('canDeletePatient')
-  const canClose = (): boolean => hasPermission('canCloseAccount')
+  const canApprove = (): boolean => hasPermission('canApproveRequests');
+  const canEdit = (): boolean => hasPermission('canEditPatient');
+  const canEditDirectly = (): boolean => hasPermission('canEditPatientDirectly');
+  const canDelete = (): boolean => hasPermission('canDeletePatient');
+  const canClose = (): boolean => hasPermission('canCloseAccount');
   const isAdmin = (): boolean => {
-    if (!user) return false
-    return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(user.role)
-  }
-  const isMasterAdmin = (): boolean => user?.role === 'MASTER_ADMIN'
-  const isSuperAdmin = (): boolean => user?.role === 'SUPER_ADMIN'
-  const isSystemAdmin = (): boolean => user?.role === 'SYSTEM_ADMIN'
-  const isFacilityAdmin = (): boolean => user?.role === 'FACILITY_ADMIN'
+    if (!user) return false;
+    return ['MASTER_ADMIN', 'SUPER_ADMIN', 'SYSTEM_ADMIN', 'FACILITY_ADMIN'].includes(user.role);
+  };
+  const isMasterAdmin = (): boolean => user?.role === 'MASTER_ADMIN';
+  const isSuperAdmin = (): boolean => user?.role === 'SUPER_ADMIN';
+  const isSystemAdmin = (): boolean => user?.role === 'SYSTEM_ADMIN';
+  const isFacilityAdmin = (): boolean => user?.role === 'FACILITY_ADMIN';
   const isClinicalStaff = (): boolean => {
-    if (!user) return false
-    return ['DOCTOR', 'SENIOR_DOCTOR', 'NURSE', 'SENIOR_NURSE', 'MIDWIFE'].includes(user.role)
-  }
+    if (!user) return false;
+    return ['DOCTOR', 'SENIOR_DOCTOR', 'NURSE', 'SENIOR_NURSE', 'MIDWIFE'].includes(user.role);
+  };
 
   return {
     user,
@@ -306,5 +323,5 @@ export function useRBAC() {
     roleHierarchy,
     roleDisplayNames,
     permissions
-  }
+  };
 }
