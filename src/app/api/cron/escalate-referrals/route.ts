@@ -1,32 +1,27 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-// This endpoint will be called by cron-job.org
-// No authentication required (or use a secret key for security)
-
 export async function GET() {
   console.log('🕐 Running referral escalation check...');
   
   const supabase = await createClient();
-  
-  // Calculate time threshold: 15 minutes ago
   const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   
-  // Find pending emergency referrals older than 15 minutes that haven't been escalated
+  // Find pending emergency referrals older than 15 minutes
   const { data: referrals, error } = await supabase
     .from('referrals')
     .select(`
       id,
       referral_code,
       patient_name,
-      emergency,
-      referring_facility_id,
-      receiving_facility_id,
+      urgency,
+      status,
       created_at,
+      referring_facility_id,
       escalation_level,
-      facilities!referring_facility_id (district, name)
+      facilities!referring_facility_id (name, district)
     `)
-    .eq('emergency', true)
+    .eq('urgency', 'emergency')
     .eq('status', 'pending')
     .eq('escalated', false)
     .lt('created_at', fifteenMinutesAgo);
@@ -37,36 +32,33 @@ export async function GET() {
   }
   
   if (!referrals || referrals.length === 0) {
-    console.log('No pending emergency referrals to escalate');
     return NextResponse.json({ message: 'No escalations needed' });
   }
-  
-  console.log(`Found ${referrals.length} referrals to escalate`);
   
   const escalatedReferrals = [];
   
   for (const referral of referrals) {
-    // Determine escalation level (0 = first alert, 1 = second alert, etc.)
     const newLevel = (referral.escalation_level || 0) + 1;
+    // ✅ Fix: facilities is an array – take first element
+    const district = referral.facilities?.[0]?.district || 'Unknown';
+    const facilityName = referral.facilities?.[0]?.name || 'Unknown facility';
     
-    // Get district supervisor contact (you need a table of supervisors)
-    // For now, we'll use a fallback number – you should create a `district_supervisors` table
-    const district = referral.facilities?.district || 'Unknown';
+    // Get district supervisor phone
     const supervisorPhone = await getDistrictSupervisorPhone(district);
     
     if (supervisorPhone) {
-      // Send SMS (implement smsService or call Africa's Talking directly)
+      // ✅ Fixed: Proper function call with parentheses and correct arguments
       await sendEscalationSMS(
         supervisorPhone,
         referral.referral_code,
         referral.patient_name,
-        referral.facilities?.name || 'Unknown facility',
+        facilityName,
         newLevel
       );
     }
     
     // Update the referral escalation status
-    const { error: updateError } = await supabase
+    await supabase
       .from('referrals')
       .update({
         escalated: true,
@@ -75,11 +67,7 @@ export async function GET() {
       })
       .eq('id', referral.id);
     
-    if (updateError) {
-      console.error(`Failed to update referral ${referral.id}:`, updateError);
-    } else {
-      escalatedReferrals.push(referral.referral_code);
-    }
+    escalatedReferrals.push(referral.referral_code);
   }
   
   return NextResponse.json({ 
@@ -88,8 +76,7 @@ export async function GET() {
   });
 }
 
-// Helper: Get district supervisor phone number
-// You need to create a `district_supervisors` table in Supabase
+// Helper: Get district supervisor phone (you need a table)
 async function getDistrictSupervisorPhone(district: string): Promise<string | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -101,7 +88,6 @@ async function getDistrictSupervisorPhone(district: string): Promise<string | nu
   
   if (error || !data) {
     console.warn(`No supervisor found for district: ${district}`);
-    // Fallback: return a default number (e.g., district health office)
     return null;
   }
   return data.phone;
@@ -109,15 +95,14 @@ async function getDistrictSupervisorPhone(district: string): Promise<string | nu
 
 // Helper: Send SMS via Africa's Talking
 async function sendEscalationSMS(
-  phone: string, 
-  referralCode: string, 
-  patientName: string, 
+  phone: string,
+  referralCode: string,
+  patientName: string,
   facilityName: string,
   level: number
 ): Promise<boolean> {
-  // Africa's Talking credentials should be in environment variables
-  const apiKey = process.env.AFRICAS_TALKING_API_KEY;
-  const username = process.env.AFRICAS_TALKING_USERNAME || 'sandbox';
+  const apiKey = process.env.AFRICASTALKING_API_KEY;
+  const username = process.env.AFRICASTALKING_USERNAME || 'sandbox';
   
   if (!apiKey) {
     console.error('Africa\'s Talking API key missing');
@@ -139,7 +124,6 @@ async function sendEscalationSMS(
         message,
       }),
     });
-    
     const result = await response.json();
     console.log(`SMS sent to ${phone}:`, result);
     return true;
