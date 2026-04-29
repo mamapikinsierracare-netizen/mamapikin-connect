@@ -16,12 +16,16 @@ export default function FacilityRequestPage() {
     setLoading(true);
     setMessage('');
 
-    const { data: user } = await supabase.auth.getUser();
-    if (!user.user) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
       setMessage('You must be logged in.');
       setLoading(false);
       return;
     }
+
+    // Get the user's email or ID for requested_by
+    const requested_by = user.email || user.id;
+    const status = 'pending';
 
     const { error } = await supabase
       .from('facility_requests')
@@ -30,9 +34,9 @@ export default function FacilityRequestPage() {
         code,
         district,
         phone,
-        requested_by: user.user.id,
-        status: 'pending'
-      });
+        requested_by,   // ✅ now defined
+        status,         // ✅ now defined
+      } as any);
 
     if (error) {
       setMessage('Error: ' + error.message);
