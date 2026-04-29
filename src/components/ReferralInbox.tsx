@@ -1,19 +1,18 @@
-// @ts-nocheck
 'use client';
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/auth';
 
-type ReferralWithDetails = {
-  id: number;
-  referral_code: string;
-  patient_id: string;
-  patient_name: string;
-  referring_facility_id: string;
-  receiving_facility_id: string;
-  reason: string;
-  urgency: 'routine' | 'urgent' | 'emergency';
-  status: string;
-  created_at: string;
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Database } from '@/types/supabase';
+
+type ReferralStatus = Database['public']['Tables']['referrals']['Row']['status'];
+type Feedback = {
+  diagnosis: string;
+  treatment: string;
+  outcome: 'alive' | 'died' | 'referred_elsewhere';
+  notes: string;
+};
+
+type ReferralWithDetails = Database['public']['Tables']['referrals']['Row'] & {
   referring_facility_name?: string;
 };
 
@@ -21,12 +20,18 @@ export default function ReferralInbox() {
   const [referrals, setReferrals] = useState<ReferralWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReferral, setSelectedReferral] = useState<ReferralWithDetails | null>(null);
-  const [feedback, setFeedback] = useState({ diagnosis: '', treatment: '', outcome: 'alive', notes: '' });
+  const [feedback, setFeedback] = useState<Feedback>({
+    diagnosis: '',
+    treatment: '',
+    outcome: 'alive',
+    notes: ''
+  });
 
   useEffect(() => {
     async function loadInbox() {
       const { data: facilityId, error: idError } = await supabase.rpc('get_app_current_facility_id');
       if (idError || !facilityId) {
+        console.error('Could not get facility ID', idError);
         setLoading(false);
         return;
       }
@@ -44,16 +49,27 @@ export default function ReferralInbox() {
           urgency,
           status,
           created_at,
+          accepted_at,
+          rejected_at,
+          arrived_at,
+          closed_at,
+          feedback,
+          escalated,
+          escalation_level,
+          history_token,
           referring_facility:referring_facility_id ( name )
         `)
         .eq('receiving_facility_id', facilityId)
         .order('created_at', { ascending: false });
 
-      if (!error && data) {
-        const mapped = data.map((item: any) => ({
+      if (error) {
+        console.error('Error loading referrals:', error);
+        setReferrals([]);
+      } else {
+        const mapped = (data || []).map((item: any) => ({
           ...item,
           referring_facility_name: item.referring_facility?.[0]?.name || item.referring_facility_id
-        }));
+        })) as ReferralWithDetails[];
         setReferrals(mapped);
       }
       setLoading(false);
@@ -61,54 +77,62 @@ export default function ReferralInbox() {
     loadInbox();
   }, []);
 
-  const handleAccept = async (id: number) => {
+  // Fully typed update helper
+  const updateReferral = async (id: number, updates: Database['public']['Tables']['referrals']['Update']) => {
     const { error } = await supabase
       .from('referrals')
-      .update({ status: 'accepted', accepted_at: new Date().toISOString() })
+      .update(updates)
       .eq('id', id);
-    if (!error) {
-      setReferrals(prev => prev.map(r => r.id === id ? { ...r, status: 'accepted' } : r));
+    if (error) {
+      console.error('Update error:', error);
+      return false;
+    }
+    return true;
+  };
+
+  const handleAccept = async (id: number) => {
+    const success = await updateReferral(id, {
+      status: 'accepted',
+      accepted_at: new Date().toISOString()
+    });
+    if (success) {
+      setReferrals(prev => prev.map(r => (r.id === id ? { ...r, status: 'accepted' } : r)));
     }
   };
 
   const handleReject = async (id: number, reason: string) => {
-    const { error } = await supabase
-      .from('referrals')
-      .update({ status: 'rejected', rejected_at: new Date().toISOString(), rejected_reason: reason })
-      .eq('id', id);
-    if (!error) {
-      setReferrals(prev => prev.map(r => r.id === id ? { ...r, status: 'rejected' } : r));
+    const success = await updateReferral(id, {
+      status: 'rejected',
+      rejected_at: new Date().toISOString(),
+      rejected_reason: reason
+    });
+    if (success) {
+      setReferrals(prev => prev.map(r => (r.id === id ? { ...r, status: 'rejected' } : r)));
     }
   };
 
   const handleArrived = async (id: number) => {
-    const { error } = await supabase
-      .from('referrals')
-      .update({ status: 'arrived', arrived_at: new Date().toISOString() })
-      .eq('id', id);
-    if (!error) {
-      setReferrals(prev => prev.map(r => r.id === id ? { ...r, status: 'arrived' } : r));
+    const success = await updateReferral(id, {
+      status: 'arrived',
+      arrived_at: new Date().toISOString()
+    });
+    if (success) {
+      setReferrals(prev => prev.map(r => (r.id === id ? { ...r, status: 'arrived' } : r)));
     }
   };
 
   const handleSubmitFeedback = async (id: number) => {
-    const { error } = await supabase
-      .from('referrals')
-      .update({
-        status: 'closed',
-        closed_at: new Date().toISOString(),
-        feedback: {
-          diagnosis: feedback.diagnosis,
-          treatment: feedback.treatment,
-          outcome: feedback.outcome,
-          notes: feedback.notes,
-          provided_at: new Date().toISOString()
-        }
-      })
-      .eq('id', id);
-    if (!error) {
+    const success = await updateReferral(id, {
+      status: 'closed',
+      closed_at: new Date().toISOString(),
+      feedback: {
+        ...feedback,
+        provided_at: new Date().toISOString()
+      }
+    });
+    if (success) {
       setSelectedReferral(null);
-      setReferrals(prev => prev.map(r => r.id === id ? { ...r, status: 'closed' } : r));
+      setReferrals(prev => prev.map(r => (r.id === id ? { ...r, status: 'closed' } : r)));
       setFeedback({ diagnosis: '', treatment: '', outcome: 'alive', notes: '' });
     }
   };
@@ -118,7 +142,9 @@ export default function ReferralInbox() {
   return (
     <div className="p-4 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">Referral Inbox</h1>
-      {referrals.length === 0 ? <p>No incoming referrals.</p> : (
+      {referrals.length === 0 ? (
+        <p>No incoming referrals.</p>
+      ) : (
         <div className="space-y-4">
           {referrals.map(ref => (
             <div key={ref.id} className="border p-4 rounded shadow">
@@ -127,7 +153,9 @@ export default function ReferralInbox() {
                 <span className={`px-2 py-1 rounded text-xs ${
                   ref.urgency === 'emergency' ? 'bg-red-100 text-red-800' :
                   ref.urgency === 'urgent' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
-                }`}>{ref.urgency.toUpperCase()}</span>
+                }`}>
+                  {ref.urgency.toUpperCase()}
+                </span>
               </div>
               <div>Patient: {ref.patient_name}</div>
               <div>From: {ref.referring_facility_name || ref.referring_facility_id}</div>
@@ -157,7 +185,7 @@ export default function ReferralInbox() {
             <h2 className="text-xl font-bold mb-4">Referral Feedback</h2>
             <input placeholder="Diagnosis" value={feedback.diagnosis} onChange={e => setFeedback({...feedback, diagnosis: e.target.value})} className="w-full border p-2 mb-2" />
             <textarea placeholder="Treatment given" value={feedback.treatment} onChange={e => setFeedback({...feedback, treatment: e.target.value})} className="w-full border p-2 mb-2" />
-            <select value={feedback.outcome} onChange={e => setFeedback({...feedback, outcome: e.target.value})} className="w-full border p-2 mb-2">
+            <select value={feedback.outcome} onChange={e => setFeedback({...feedback, outcome: e.target.value as Feedback['outcome']})} className="w-full border p-2 mb-2">
               <option value="alive">Alive</option>
               <option value="died">Died</option>
               <option value="referred_elsewhere">Referred elsewhere</option>

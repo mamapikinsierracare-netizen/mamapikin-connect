@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { supabase } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 import Navigation from '@/components/Navigation';
 
 export default function FacilityRequestPage() {
@@ -23,10 +23,7 @@ export default function FacilityRequestPage() {
       return;
     }
 
-    // Get the user's email or ID for requested_by
     const requested_by = user.email || user.id;
-    const status = 'pending';
-
     const { error } = await supabase
       .from('facility_requests')
       .insert({
@@ -34,9 +31,9 @@ export default function FacilityRequestPage() {
         code,
         district,
         phone,
-        requested_by,   // ✅ now defined
-        status,         // ✅ now defined
-      } as any);
+        requested_by,
+        status: 'pending',
+      });
 
     if (error) {
       setMessage('Error: ' + error.message);

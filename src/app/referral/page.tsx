@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Navigation from '@/components/Navigation';
 import { smsService } from '@/lib/smsService';
 import { commDB } from '@/lib/communicationDB';
-import { supabase } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 
 type Patient = {
   patient_id: string;
