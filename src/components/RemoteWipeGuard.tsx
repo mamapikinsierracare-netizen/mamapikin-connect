@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // update import if needed
 import { useRouter } from 'next/navigation';
+import { commDB } from '@/lib/communicationDB'; // ✅ use existing Dexie instance
 
 export default function RemoteWipeGuard() {
   const router = useRouter();
@@ -24,12 +25,13 @@ export default function RemoteWipeGuard() {
       }
 
       if (staff?.force_logout === true) {
-        // Clear all local Dexie data
+        // Clear all local Dexie data using commDB
         try {
-          const { db } = await import('@/lib/offlineService');
-          if (db && db.delete) {
-            await db.delete();
+          if (commDB && commDB.delete) {
+            await commDB.delete();
             console.log('Local database wiped due to force_logout');
+          } else {
+            console.warn('commDB.delete not available');
           }
         } catch (err) {
           console.error('Failed to wipe local DB:', err);
