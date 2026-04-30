@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/auth'
+import { storePinForUser, hasStoredPin } from '@/lib/pinAuth'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -10,6 +11,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('nurse123')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  
+  // PIN setup modal state
+  const [showPinSetup, setShowPinSetup] = useState(false)
+  const [pin, setPin] = useState('')
+  const [pinConfirm, setPinConfirm] = useState('')
+  const [pinError, setPinError] = useState('')
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -36,12 +44,56 @@ export default function LoginPage() {
         console.log('Facility context set successfully')
       } catch (err) {
         console.error('Failed to set facility context:', err)
-        // Continue anyway - the app will still work but RLS may restrict some data
+        // Continue anyway
       }
-      // Force redirect using multiple methods for reliability
-      setTimeout(() => {
-        window.location.href = '/'
-      }, 100)
+      
+      // Check if user already has a PIN stored offline
+      const userId = data.user.id
+      setCurrentUserId(userId)
+      const hasPin = await hasStoredPin(userId)
+      
+      if (!hasPin) {
+        // No PIN yet – show setup modal
+        setShowPinSetup(true)
+        setLoading(false)
+      } else {
+        // PIN exists – proceed directly
+        // Store last user ID for offline detection
+        localStorage.setItem('lastUserId', userId)
+        // Force redirect
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 100)
+      }
+    }
+  }
+
+  const handlePinSubmit = async () => {
+    if (pin.length !== 4) {
+      setPinError('PIN must be exactly 4 digits')
+      return
+    }
+    if (!/^\d+$/.test(pin)) {
+      setPinError('PIN must contain only numbers')
+      return
+    }
+    if (pin !== pinConfirm) {
+      setPinError('PINs do not match')
+      return
+    }
+    
+    if (currentUserId) {
+      const success = await storePinForUser(currentUserId, pin)
+      if (success) {
+        setShowPinSetup(false)
+        localStorage.setItem('lastUserId', currentUserId)
+        // Redirect to home
+        setTimeout(() => {
+          window.location.href = '/'
+        }, 100)
+      } else {
+        setPinError('Failed to save PIN. Please try again.')
+      }
     }
   }
 
@@ -104,6 +156,67 @@ export default function LoginPage() {
           <p className="text-gray-600">Password: nurse123</p>
         </div>
       </div>
+
+      {/* PIN Setup Modal */}
+      {showPinSetup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6">
+            <h2 className="text-xl font-bold mb-4">Set Up Offline PIN</h2>
+            <p className="text-gray-600 mb-4">
+              Create a 4-digit PIN to log in when you have no internet connection.
+            </p>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1">4-digit PIN</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                className="w-full border rounded-lg px-3 py-2 text-center text-2xl tracking-widest"
+                autoFocus
+              />
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1">Confirm PIN</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                value={pinConfirm}
+                onChange={(e) => setPinConfirm(e.target.value.replace(/\D/g, ''))}
+                className="w-full border rounded-lg px-3 py-2 text-center text-2xl tracking-widest"
+              />
+            </div>
+            
+            {pinError && (
+              <p className="text-red-500 text-sm mb-3">{pinError}</p>
+            )}
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  // Skip PIN setup? Not recommended but allowed.
+                  setShowPinSetup(false)
+                  localStorage.setItem('lastUserId', currentUserId || '')
+                  window.location.href = '/'
+                }}
+                className="flex-1 bg-gray-300 py-2 rounded-lg"
+              >
+                Skip (not recommended)
+              </button>
+              <button
+                onClick={handlePinSubmit}
+                className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700"
+              >
+                Save PIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

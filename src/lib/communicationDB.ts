@@ -1,5 +1,5 @@
 // src/lib/communicationDB.ts
-// Offline-first database for emails, inter-facility messages, bulletins, and referrals
+// Offline-first database for emails, inter-facility messages, bulletins, referrals, and offline PIN login
 
 import Dexie, { Table } from 'dexie';
 
@@ -146,6 +146,17 @@ export interface ReferralInboxItem {
 }
 
 // ============================================
+// Offline PIN Authentication (NEW)
+// ============================================
+export interface UserPin {
+  userId: string;                 // Supabase user UUID
+  pin_hash: string;               // SHA-256 hash of the 4-6 digit PIN
+  attempts: number;               // number of consecutive wrong attempts
+  locked_until: Date | null;      // lock expiry timestamp (null if not locked)
+  updated_at: Date;               // last modification time
+}
+
+// ============================================
 // Dexie Database Class
 // ============================================
 class CommunicationDB extends Dexie {
@@ -156,9 +167,12 @@ class CommunicationDB extends Dexie {
   syncQueue!: Table<CommunicationSyncQueue, number>;
   referrals!: Table<Referral, number>;
   referralInbox!: Table<ReferralInboxItem, number>;
+  user_pins!: Table<UserPin, string>;      // NEW: primary key is userId
 
   constructor() {
     super('MamaPikinCommunication');
+    
+    // Version 1 (existing tables)
     this.version(1).stores({
       emails: '++id, status, createdAt, facilityId',
       messages: '++id, fromFacilityId, toFacilityId, status, createdAt, isOperational, threadId',
@@ -167,6 +181,22 @@ class CommunicationDB extends Dexie {
       syncQueue: '++id, type, status, priority, nextRetryAt',
       referrals: '++id, referralCode, patientId, referringFacilityId, receivingFacilityId, status, createdAt, syncStatus',
       referralInbox: '++id, referralId, facilityId, status',
+    });
+
+    // Version 2 – ADD user_pins table for offline PIN authentication
+    this.version(2).stores({
+      emails: '++id, status, createdAt, facilityId',
+      messages: '++id, fromFacilityId, toFacilityId, status, createdAt, isOperational, threadId',
+      facilities: 'id, district, type, isActive',
+      bulletins: '++id, severity, expiresAt, isRead',
+      syncQueue: '++id, type, status, priority, nextRetryAt',
+      referrals: '++id, referralCode, patientId, referringFacilityId, receivingFacilityId, status, createdAt, syncStatus',
+      referralInbox: '++id, referralId, facilityId, status',
+      user_pins: 'userId',   // primary key userId
+    }).upgrade(async (tx) => {
+      // When upgrading from version 1 to 2, ensure the user_pins table is empty
+      // No data conversion needed; just create the table.
+      await tx.table('user_pins').bulkAdd([]);
     });
   }
 }
