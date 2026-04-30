@@ -5,10 +5,10 @@ import { supabase } from '@/lib/supabase';
 import { Database } from '@/types/supabase';
 
 type ReferralStatus = Database['public']['Tables']['referrals']['Row']['status'];
-type Feedback = {
+type BackReferralForm = {
   diagnosis: string;
   treatment: string;
-  outcome: 'alive' | 'died' | 'referred_elsewhere';
+  outcome: 'treated' | 'admitted' | 'transferred' | 'deceased' | 'left_against_advice';
   notes: string;
 };
 
@@ -20,13 +20,15 @@ export default function ReferralInbox() {
   const [referrals, setReferrals] = useState<ReferralWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReferral, setSelectedReferral] = useState<ReferralWithDetails | null>(null);
-  const [feedback, setFeedback] = useState<Feedback>({
+  const [submitting, setSubmitting] = useState(false);
+  const [backReferralForm, setBackReferralForm] = useState<BackReferralForm>({
     diagnosis: '',
     treatment: '',
-    outcome: 'alive',
+    outcome: 'treated',
     notes: ''
   });
 
+  // Load referrals (unchanged)
   useEffect(() => {
     async function loadInbox() {
       const { data: facilityId, error: idError } = await supabase.rpc('get_app_current_facility_id');
@@ -77,7 +79,7 @@ export default function ReferralInbox() {
     loadInbox();
   }, []);
 
-  // Fully typed update helper
+  // Helper for simple status updates (accept, reject, arrived) – unchanged
   const updateReferral = async (id: number, updates: Database['public']['Tables']['referrals']['Update']) => {
     const { error } = await supabase
       .from('referrals')
@@ -121,19 +123,49 @@ export default function ReferralInbox() {
     }
   };
 
-  const handleSubmitFeedback = async (id: number) => {
-    const success = await updateReferral(id, {
-      status: 'closed',
-      closed_at: new Date().toISOString(),
-      feedback: {
-        ...feedback,
-        provided_at: new Date().toISOString()
+  // NEW: Submit back‑referral via API endpoint
+  const handleSubmitBackReferral = async (id: number) => {
+    setSubmitting(true);
+    try {
+      const response = await fetch('/api/referrals/back-referral', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          referral_id: id,
+          outcome: backReferralForm.outcome,
+          diagnosis: backReferralForm.diagnosis,
+          treatment: backReferralForm.treatment,
+          notes: backReferralForm.notes
+        })
+      });
+
+      if (response.ok) {
+        alert('Back‑referral submitted successfully. The referring facility has been notified.');
+        // Update local state: mark referral as closed
+        setReferrals(prev =>
+          prev.map(r =>
+            r.id === id
+              ? { ...r, status: 'closed', closed_at: new Date().toISOString() }
+              : r
+          )
+        );
+        // Close modal and reset form
+        setSelectedReferral(null);
+        setBackReferralForm({
+          diagnosis: '',
+          treatment: '',
+          outcome: 'treated',
+          notes: ''
+        });
+      } else {
+        const error = await response.json();
+        alert('Error: ' + (error.error || 'Failed to submit back‑referral'));
       }
-    });
-    if (success) {
-      setSelectedReferral(null);
-      setReferrals(prev => prev.map(r => (r.id === id ? { ...r, status: 'closed' } : r)));
-      setFeedback({ diagnosis: '', treatment: '', outcome: 'alive', notes: '' });
+    } catch (err) {
+      console.error('Network error:', err);
+      alert('Network error. Please check your connection and try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -179,19 +211,84 @@ export default function ReferralInbox() {
           ))}
         </div>
       )}
+
+      {/* Back‑Referral Modal (replaces old feedback modal) */}
       {selectedReferral && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Referral Feedback</h2>
-            <input placeholder="Diagnosis" value={feedback.diagnosis} onChange={e => setFeedback({...feedback, diagnosis: e.target.value})} className="w-full border p-2 mb-2" />
-            <textarea placeholder="Treatment given" value={feedback.treatment} onChange={e => setFeedback({...feedback, treatment: e.target.value})} className="w-full border p-2 mb-2" />
-            <select value={feedback.outcome} onChange={e => setFeedback({...feedback, outcome: e.target.value as Feedback['outcome']})} className="w-full border p-2 mb-2">
-              <option value="alive">Alive</option>
-              <option value="died">Died</option>
-              <option value="referred_elsewhere">Referred elsewhere</option>
-            </select>
-            <textarea placeholder="Additional notes" value={feedback.notes} onChange={e => setFeedback({...feedback, notes: e.target.value})} className="w-full border p-2 mb-2" />
-            <button onClick={() => handleSubmitFeedback(selectedReferral.id)} className="bg-green-600 text-white px-4 py-2 rounded w-full">Submit & Close Referral</button>
+            <h2 className="text-xl font-bold mb-4">Patient Outcome – Back‑Referral</h2>
+            
+            <div className="mb-2">
+              <label className="block text-sm font-medium mb-1">Outcome *</label>
+              <select
+                value={backReferralForm.outcome}
+                onChange={e => setBackReferralForm({...backReferralForm, outcome: e.target.value as BackReferralForm['outcome']})}
+                className="w-full border p-2 rounded"
+              >
+                <option value="treated">Treated and discharged</option>
+                <option value="admitted">Admitted for further care</option>
+                <option value="transferred">Transferred to another facility</option>
+                <option value="deceased">Deceased</option>
+                <option value="left_against_advice">Left against medical advice</option>
+              </select>
+            </div>
+
+            <div className="mb-2">
+              <label className="block text-sm font-medium mb-1">Diagnosis</label>
+              <input
+                type="text"
+                placeholder="e.g., Severe malaria, PPH"
+                value={backReferralForm.diagnosis}
+                onChange={e => setBackReferralForm({...backReferralForm, diagnosis: e.target.value})}
+                className="w-full border p-2 rounded"
+              />
+            </div>
+
+            <div className="mb-2">
+              <label className="block text-sm font-medium mb-1">Treatment given</label>
+              <textarea
+                placeholder="e.g., IV artesunate, blood transfusion"
+                value={backReferralForm.treatment}
+                onChange={e => setBackReferralForm({...backReferralForm, treatment: e.target.value})}
+                className="w-full border p-2 rounded"
+                rows={3}
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-1">Additional notes</label>
+              <textarea
+                placeholder="Any other relevant information..."
+                value={backReferralForm.notes}
+                onChange={e => setBackReferralForm({...backReferralForm, notes: e.target.value})}
+                className="w-full border p-2 rounded"
+                rows={2}
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setSelectedReferral(null);
+                  setBackReferralForm({
+                    diagnosis: '',
+                    treatment: '',
+                    outcome: 'treated',
+                    notes: ''
+                  });
+                }}
+                className="flex-1 px-4 py-2 border rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleSubmitBackReferral(selectedReferral.id)}
+                disabled={submitting}
+                className="flex-1 bg-green-600 text-white px-4 py-2 rounded disabled:bg-gray-400"
+              >
+                {submitting ? 'Submitting...' : 'Submit & Close Referral'}
+              </button>
+            </div>
           </div>
         </div>
       )}
