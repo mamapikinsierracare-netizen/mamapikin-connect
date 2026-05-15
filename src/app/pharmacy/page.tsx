@@ -4,8 +4,8 @@
 import { useState, useEffect, useRef } from 'react'
 import Navigation from '@/components/Navigation'
 import { useRBAC } from '@/hooks/useRBAC'
+import { saveOffline } from '@/lib/db' 
 
-// Define types locally to avoid import issues
 type Medicine = {
   id: number
   medicine_id: string
@@ -42,16 +42,21 @@ type Inventory = {
 }
 
 type Patient = {
-  patient_id: string
+  id?: string
+  patient_id?: string
   full_name: string
   phone: string | null
   district: string | null
+  allergies: string[] | null 
 }
 
 type Prescription = {
   prescription_id: string
   patient_id: string
   patient_name: string
+  medicine_id: string
+  medicine_name: string
+  quantity: number
   prescribed_by: string
   prescribed_by_role: string
   prescription_date: string
@@ -71,7 +76,6 @@ type Dispensing = {
   dispensing_date: string
 }
 
-// Helper function to safely get environment variables
 const getSupabaseUrl = (): string => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!url) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL')
@@ -84,7 +88,6 @@ const getSupabaseAnonKey = (): string => {
   return key
 }
 
-// API helper functions with proper error handling
 async function fetchFromSupabase<T>(endpoint: string): Promise<T[]> {
   try {
     const supabaseUrl = getSupabaseUrl()
@@ -125,6 +128,28 @@ async function postToSupabase(endpoint: string, data: unknown): Promise<boolean>
     return response.ok
   } catch (error) {
     console.error(`Error posting to ${endpoint}:`, error)
+    return false
+  }
+}
+
+async function patchToSupabase(endpoint: string, matchColumn: string, matchValue: string, data: unknown): Promise<boolean> {
+  try {
+    const supabaseUrl = getSupabaseUrl()
+    const supabaseAnonKey = getSupabaseAnonKey()
+
+    const response = await fetch(`${supabaseUrl}/rest/v1/${endpoint}?${matchColumn}=eq.${matchValue}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(data)
+    })
+    return response.ok
+  } catch (error) {
+    console.error(`Error patching to ${endpoint}:`, error)
     return false
   }
 }
@@ -190,6 +215,45 @@ export default function PharmacyPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // THE SILENT POSTMAN
+  useEffect(() => {
+    async function triggerSync() {
+      if (!navigator.onLine) return;
+
+      try {
+        const { getPendingSyncQueue, markAsSynced } = await import('@/lib/db');
+        const queue = await getPendingSyncQueue();
+
+        if (queue.length === 0) return;
+
+        console.log(`📮 Postman woke up! Found ${queue.length} items in the Outbox.`);
+
+        for (const item of queue) {
+          if (item.table === 'prescriptions' && item.operation === 'INSERT') {
+            const { pending_sync, synced, last_modified, id, ...cleanData } = item.data;
+            const supabaseData = { ...cleanData, prescription_id: id };
+
+            const success = await postToSupabase('prescriptions', supabaseData);
+            
+            if (success) {
+              await markAsSynced(item.table, item.data.id);
+              console.log(`✅ Delivered! Prescription ${id} is now in the cloud.`);
+            }
+          }
+        }
+        
+        await loadPrescriptionsAndDispensings();
+        
+      } catch (error) {
+        console.error("❌ The Postman encountered an error:", error);
+      }
+    }
+
+    triggerSync();
+    window.addEventListener('online', triggerSync);
+    return () => window.removeEventListener('online', triggerSync);
+  }, []);
+
   async function loadData() {
     setLoading(true)
     const [meds, inv] = await Promise.all([
@@ -216,17 +280,18 @@ export default function PharmacyPage() {
     const results: Patient[] = []
     const seenIds = new Set<string>()
     
-    // Search in localStorage
     const localPatients = localStorage.getItem('offline_patients')
     if (localPatients) {
       const localList = JSON.parse(localPatients)
-      const filtered = localList.filter((p: Patient) => 
-        p.full_name?.toLowerCase().includes(term.toLowerCase()) ||
-        p.patient_id?.toLowerCase().includes(term.toLowerCase())
-      )
+      const filtered = localList.filter((p: Patient) => {
+        const pId = p.patient_id || p.id || '';
+        return p.full_name?.toLowerCase().includes(term.toLowerCase()) || pId.toLowerCase().includes(term.toLowerCase())
+      })
+      
       filtered.forEach((p: Patient) => {
-        if (!seenIds.has(p.patient_id)) {
-          seenIds.add(p.patient_id)
+        const uniqueId = p.patient_id || p.id || '';
+        if (!seenIds.has(uniqueId)) {
+          seenIds.add(uniqueId)
           results.push(p)
         }
       })
@@ -276,51 +341,56 @@ export default function PharmacyPage() {
       setMessageType('error')
       return
     }
-    if (!formData.dosage) {
-      setMessage('❌ Please enter dosage')
-      setMessageType('error')
-      return
-    }
 
     setLoading(true)
     setMessage('')
 
     try {
-      const prescriptionId = `RX-${selectedPatient.patient_id}-${Date.now()}`
+      const selectedMed = medicines.find(m => m.medicine_id === formData.medicine_id)
+      const actualPatientId = selectedPatient.patient_id || selectedPatient.id || 'unknown';
+      const prescriptionId = `RX-${actualPatientId}-${Date.now()}`
       
-      const prescription = {
-        prescription_id: prescriptionId,
-        patient_id: selectedPatient.patient_id,
+      // THE FIX: We put ALL the required missing fields back into the envelope!
+      const prescriptionData = {
+        id: prescriptionId, 
+        patient_id: actualPatientId,
         patient_name: selectedPatient.full_name,
+        medicine_id: formData.medicine_id,
+        medicine_name: selectedMed?.generic_name || 'Unknown Medicine',
+        dosage: formData.dosage,
+        frequency: formData.frequency,
+        duration_days: 7, 
+        quantity: formData.quantity,
+        diagnosis: formData.diagnosis,
+        notes: '',
+        status: 'pending',
         prescribed_by: user?.full_name || user?.email || 'Unknown',
         prescribed_by_role: user?.role || 'Unknown',
         prescription_date: new Date().toISOString().split('T')[0],
-        diagnosis: formData.diagnosis,
-        notes: '',
-        status: 'pending'
+        created_at: new Date().toISOString()
       }
       
-      const success = await postToSupabase('prescriptions', prescription)
+      await saveOffline('prescriptions', prescriptionData);
       
-      if (success) {
-        setMessage('✅ Prescription created successfully')
-        setMessageType('success')
-        
-        setSelectedPatient(null)
-        setFormData({
-          medicine_id: '',
-          dosage: '',
-          frequency: '',
-          quantity: 1,
-          diagnosis: ''
-        })
-        await loadPrescriptionsAndDispensings()
-      } else {
-        setMessage('❌ Failed to create prescription')
-        setMessageType('error')
+      setMessage('✅ Prescription safely stored in Offline Outbox!')
+      setMessageType('success')
+      
+      setSelectedPatient(null)
+      setFormData({
+        medicine_id: '',
+        dosage: '',
+        frequency: '',
+        quantity: 1,
+        diagnosis: ''
+      })
+
+      if (navigator.onLine) {
+         window.dispatchEvent(new Event('online'));
       }
+      
     } catch (error) {
-      setMessage('❌ Error creating prescription')
+      console.error(error);
+      setMessage('❌ Error saving to local tablet.')
       setMessageType('error')
     } finally {
       setLoading(false)
@@ -328,11 +398,94 @@ export default function PharmacyPage() {
     }
   }
 
+  async function handleDispense(pres: Prescription) {
+    setLoading(true);
+    
+    const medicineBatches = inventory.filter(i => i.medicine_id === pres.medicine_id && i.quantity_current > 0);
+    
+    if (medicineBatches.length === 0) {
+      setMessage(`❌ OUT OF STOCK: We do not have any ${pres.medicine_name} on the shelf.`);
+      setMessageType('error');
+      setLoading(false);
+      setTimeout(() => setMessage(''), 5000);
+      return;
+    }
+
+    const batchToUse = medicineBatches.find(batch => batch.quantity_current >= pres.quantity);
+
+    if (!batchToUse) {
+      setMessage(`❌ INSUFFICIENT STOCK: We have some, but not enough to fill this prescription.`);
+      setMessageType('error');
+      setLoading(false);
+      setTimeout(() => setMessage(''), 5000);
+      return;
+    }
+
+    const today = new Date();
+    const expiryDate = new Date(batchToUse.expiry_date);
+    
+    if (expiryDate < today) {
+      setMessage(`🚨 CRITICAL SAFETY BLOCK: The stock for ${pres.medicine_name} is EXPIRED. Cannot dispense!`);
+      setMessageType('error');
+      setLoading(false);
+      setTimeout(() => setMessage(''), 7000); 
+      return;
+    }
+
+    try {
+      // THE FIX: We add the prescription_id and medicine_id so the database has the full story!
+      const dispensingRecord = {
+        dispensing_id: `DISP-${Date.now()}`,
+        prescription_id: pres.prescription_id, 
+        patient_id: pres.patient_id,
+        patient_name: pres.patient_name,
+        medicine_id: pres.medicine_id,
+        medicine_name: pres.medicine_name,
+        quantity_dispensed: pres.quantity,
+        dispensed_by: user?.full_name || 'Nurse',
+        dispensing_date: new Date().toISOString()
+      };
+
+      await postToSupabase('dispensings', dispensingRecord);
+      await patchToSupabase('prescriptions', 'prescription_id', pres.prescription_id, { status: 'dispensed' });
+      await patchToSupabase('inventory', 'inventory_id', batchToUse.inventory_id, { 
+        quantity_current: batchToUse.quantity_current - pres.quantity 
+      });
+
+      setMessage('✅ Medicine dispensed successfully!');
+      setMessageType('success');
+      
+      await loadData();
+      await loadPrescriptionsAndDispensings();
+
+    } catch (err) {
+      setMessage('❌ System Error during dispensing.');
+      setMessageType('error');
+    }
+    setLoading(false);
+    setTimeout(() => setMessage(''), 4000);
+  }
+
   const selectedMedicine = medicines.find(m => m.medicine_id === formData.medicine_id)
+  
   const totalStock = inventory
     .filter(i => i.medicine_id === selectedMedicine?.medicine_id)
     .reduce((sum, i) => sum + i.quantity_current, 0)
   const isLowStock = selectedMedicine && totalStock <= (selectedMedicine.reorder_level || 10)
+
+  const safeAllergies = Array.isArray(selectedPatient?.allergies) 
+    ? selectedPatient?.allergies 
+    : typeof selectedPatient?.allergies === 'string'
+      ? [selectedPatient?.allergies]
+      : [];
+
+  const isAllergic = !!(
+    selectedMedicine && 
+    safeAllergies.length > 0 &&
+    safeAllergies.some(allergy => 
+      selectedMedicine.generic_name.toLowerCase().includes(String(allergy).toLowerCase())
+    )
+  );
 
   return (
     <>
@@ -355,7 +508,6 @@ export default function PharmacyPage() {
             </div>
           )}
           
-          {/* Tab Navigation */}
           <div className="flex flex-wrap gap-2 mb-6">
             <button
               onClick={() => setActiveTab('inventory')}
@@ -391,68 +543,65 @@ export default function PharmacyPage() {
             </button>
           </div>
           
-          {/* Inventory Tab */}
-{activeTab === 'inventory' && (
-  <div className="bg-white rounded-lg shadow-md overflow-hidden">
-    {loading ? (
-      <div className="p-8 text-center text-gray-500">Loading inventory...</div>
-    ) : inventory.length === 0 ? (
-      <div className="p-8 text-center text-gray-500">No inventory items found.</div>
-    ) : (
-      <div className="overflow-x-auto">
-        <table className="min-w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medicine</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiry</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {inventory.map((item) => {
-              const medicine = medicines.find(m => m.medicine_id === item.medicine_id)
-              const expiryStatus = getExpiryStatus(item.expiry_date)
-              const isLow = item.quantity_current <= (medicine?.reorder_level || 10)
-              
-              return (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{medicine?.generic_name || item.medicine_id}</div>
-                    <div className="text-xs text-gray-500">{medicine?.brand_name}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{item.batch_number}</td>
-                  <td className="px-4 py-3">
-                    <span className={`font-medium ${isLow ? 'text-red-600' : 'text-green-600'}`}>
-                      {item.quantity_current} {medicine?.unit || 'units'}
-                    </span>
-                    {isLow && <div className="text-xs text-red-500">Reorder at {medicine?.reorder_level}</div>}
-                  </td>
-                  <td className="px-4 py-3 text-sm">{formatDate(item.expiry_date)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2 py-1 rounded-full text-xs ${expiryStatus.color}`}>
-                      {expiryStatus.text}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{item.storage_location || '-'}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    )}
-  </div>
-)}
+          {activeTab === 'inventory' && (
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+              {loading ? (
+                <div className="p-8 text-center text-gray-500">Loading inventory...</div>
+              ) : inventory.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">No inventory items found.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medicine</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiry</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {inventory.map((item) => {
+                        const medicine = medicines.find(m => m.medicine_id === item.medicine_id)
+                        const expiryStatus = getExpiryStatus(item.expiry_date)
+                        const isLow = item.quantity_current <= (medicine?.reorder_level || 10)
+                        
+                        return (
+                          <tr key={item.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3">
+                              <div className="font-medium">{medicine?.generic_name || item.medicine_id}</div>
+                              <div className="text-xs text-gray-500">{medicine?.brand_name}</div>
+                            </td>
+                            <td className="px-4 py-3 text-sm">{item.batch_number}</td>
+                            <td className="px-4 py-3">
+                              <span className={`font-medium ${isLow ? 'text-red-600' : 'text-green-600'}`}>
+                                {item.quantity_current} {medicine?.unit || 'units'}
+                              </span>
+                              {isLow && <div className="text-xs text-red-500">Reorder at {medicine?.reorder_level}</div>}
+                            </td>
+                            <td className="px-4 py-3 text-sm">{formatDate(item.expiry_date)}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-1 rounded-full text-xs ${expiryStatus.color}`}>
+                                {expiryStatus.text}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm">{item.storage_location || '-'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
           
-          {/* Prescribe Tab */}
           {activeTab === 'prescribe' && (
             <div className="bg-white rounded-lg shadow-md p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-4">Create Prescription</h2>
               
-              {/* Patient Selection */}
               <div className="mb-6">
                 <label className="block text-gray-700 font-medium mb-2">Select Patient</label>
                 <div ref={searchRef} className="relative">
@@ -490,13 +639,13 @@ export default function PharmacyPage() {
                       ) : (
                         searchResults.map((patient) => (
                           <div
-                            key={patient.patient_id}
+                            key={patient.patient_id || patient.id}
                             onClick={() => handleSelectPatient(patient)}
                             className="p-3 hover:bg-green-50 cursor-pointer border-b"
                           >
                             <div className="font-medium text-gray-800">{patient.full_name}</div>
                             <div className="text-sm text-gray-500">
-                              ID: {patient.patient_id} | 📞 {patient.phone || 'No phone'} | 📍 {patient.district || 'No district'}
+                              ID: {patient.patient_id || patient.id} | 📞 {patient.phone || 'No phone'} | 📍 {patient.district || 'No district'}
                             </div>
                           </div>
                         ))
@@ -511,7 +660,7 @@ export default function PharmacyPage() {
                       <div>
                         <div className="font-bold text-green-800">{selectedPatient.full_name}</div>
                         <div className="text-sm text-gray-600">
-                          ID: {selectedPatient.patient_id} | 📞 {selectedPatient.phone || 'N/A'}
+                          ID: {selectedPatient.patient_id || selectedPatient.id} | 📞 {selectedPatient.phone || 'N/A'}
                         </div>
                       </div>
                       <button
@@ -526,7 +675,6 @@ export default function PharmacyPage() {
                 )}
               </div>
               
-              {/* Prescription Form */}
               {selectedPatient && (
                 <form onSubmit={handleSubmitPrescription}>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -548,6 +696,11 @@ export default function PharmacyPage() {
                       </select>
                       {isLowStock && selectedMedicine && (
                         <p className="text-xs text-red-500 mt-1">⚠️ Low stock alert</p>
+                      )}
+                      {isAllergic && (
+                        <div className="mt-2 p-2 bg-red-600 text-white text-sm font-bold rounded animate-pulse">
+                          🚨 CRITICAL WARNING: Patient is ALLERGIC to this medicine!
+                        </div>
                       )}
                     </div>
                     <div>
@@ -608,17 +761,18 @@ export default function PharmacyPage() {
                   
                   <button
                     type="submit"
-                    disabled={loading}
-                    className={`w-full py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+                    disabled={loading || isAllergic}
+                    className={`w-full py-3 rounded-lg text-white font-medium ${
+                      (loading || isAllergic) ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                    }`}
                   >
-                    {loading ? 'Creating...' : 'Create Prescription'}
+                    {isAllergic ? '❌ CANNOT PRESCRIBE (ALLERGY)' : loading ? 'Creating...' : 'Create Prescription'}
                   </button>
                 </form>
               )}
             </div>
           )}
           
-          {/* Dispense Queue Tab */}
           {activeTab === 'dispense' && (
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
               {prescriptions.filter(p => p.status === 'pending').length === 0 ? (
@@ -632,8 +786,8 @@ export default function PharmacyPage() {
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Patient</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Prescription</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medicine</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
                       </tr>
                     </thead>
@@ -645,20 +799,15 @@ export default function PharmacyPage() {
                             <div className="font-medium">{pres.patient_name}</div>
                             <div className="text-xs text-gray-500">{pres.patient_id}</div>
                           </td>
-                          <td className="px-4 py-3 text-sm">RX-{pres.prescription_id.slice(-8)}</td>
-                          <td className="px-4 py-3">
-                            <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">Pending</span>
-                          </td>
+                          <td className="px-4 py-3 font-medium text-blue-600">{pres.medicine_name || 'Unknown'}</td>
+                          <td className="px-4 py-3 font-bold">{pres.quantity}</td>
                           <td className="px-4 py-3">
                             <button
-                              onClick={() => {
-                                setMessage('Dispense feature will be implemented soon')
-                                setMessageType('info')
-                                setTimeout(() => setMessage(''), 3000)
-                              }}
-                              className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                              onClick={() => handleDispense(pres)}
+                              disabled={loading}
+                              className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:bg-gray-400"
                             >
-                              Dispense
+                              {loading ? 'Wait...' : 'Dispense'}
                             </button>
                           </td>
                         </tr>
@@ -670,7 +819,6 @@ export default function PharmacyPage() {
             </div>
           )}
           
-          {/* History Tab */}
           {activeTab === 'history' && (
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
               {dispensings.length === 0 ? (

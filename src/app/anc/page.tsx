@@ -1,7 +1,9 @@
+// src/app/anc/page.tsx
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
 import Navigation from '@/components/Navigation'
+import { saveOffline } from '@/lib/db'
 
 // Type definitions
 type Patient = {
@@ -14,7 +16,6 @@ type Patient = {
 }
 
 type AncVisit = {
-  id?: number
   visit_id: string
   patient_id: string
   visit_number: number
@@ -39,18 +40,15 @@ type AncVisit = {
   synced_to_cloud: boolean
 }
 
-// CRITICAL DANGER SIGNS that trigger SMS
 const CRITICAL_DANGER_SIGNS = [
   'Severe headache', 'Blurred vision', 'Convulsions', 
   'Severe abdominal pain', 'Vaginal bleeding', 'Difficulty breathing',
   'Reduced fetal movement', 'Swelling of hands/face'
 ]
 
-// SMS Service
 const smsService = {
   async sendDangerSignAlert(alert: any): Promise<boolean> {
     if (!navigator.onLine) {
-      // Queue for later
       const queue = localStorage.getItem('sms_queue')
       const alerts = queue ? JSON.parse(queue) : []
       alerts.push({ ...alert, queuedAt: new Date().toISOString() })
@@ -73,26 +71,18 @@ const smsService = {
   }
 }
 
-// Check Supabase connection
 async function isSupabaseReachable(): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  
   if (!supabaseUrl || !supabaseAnonKey) return false
-  
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 5000)
-    
     const response = await fetch(`${supabaseUrl}/rest/v1/patients?limit=1`, {
       method: 'GET',
-      headers: { 
-        'apikey': supabaseAnonKey, 
-        'Authorization': `Bearer ${supabaseAnonKey}`
-      },
+      headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}`},
       signal: controller.signal
     })
-    
     clearTimeout(timeoutId)
     return response.status === 200 || response.status === 206
   } catch {
@@ -108,11 +98,9 @@ function safeString(value: any): string {
 async function getAllPatients(): Promise<Patient[]> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  
   const results: Patient[] = []
   const seenIds = new Set<string>()
   
-  // Get from localStorage
   const localPatients = localStorage.getItem('offline_patients')
   if (localPatients) {
     try {
@@ -133,22 +121,15 @@ async function getAllPatients(): Promise<Patient[]> {
     } catch (e) { console.log('Error parsing localStorage:', e) }
   }
   
-  // Get from Supabase
   if (supabaseUrl && supabaseAnonKey) {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5000)
-      
       const response = await fetch(`${supabaseUrl}/rest/v1/patients?select=patient_id,full_name,phone,district,date_of_birth,village&order=full_name`, {
-        headers: { 
-          'apikey': supabaseAnonKey, 
-          'Authorization': `Bearer ${supabaseAnonKey}`
-        },
+        headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` },
         signal: controller.signal
       })
-      
       clearTimeout(timeoutId)
-      
       if (response.ok) {
         const cloudPatients: Patient[] = await response.json()
         cloudPatients.forEach(p => {
@@ -167,7 +148,6 @@ async function getAllPatients(): Promise<Patient[]> {
       }
     } catch (e) { console.log('Error fetching from Supabase:', e) }
   }
-  
   return results.sort((a, b) => safeString(a.full_name).localeCompare(safeString(b.full_name)))
 }
 
@@ -178,79 +158,23 @@ async function getPatientAncVisits(patientId: string): Promise<AncVisit[]> {
   const localKey = `anc_visits_${patientId}`
   const localVisits = localStorage.getItem(localKey)
   const localList: AncVisit[] = localVisits ? JSON.parse(localVisits) : []
-  
   let cloudList: AncVisit[] = []
   
   if (supabaseUrl && supabaseAnonKey) {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 5000)
-      
       const response = await fetch(`${supabaseUrl}/rest/v1/anc_visits?patient_id=eq.${patientId}&order=visit_number.asc`, {
-        headers: { 
-          'apikey': supabaseAnonKey, 
-          'Authorization': `Bearer ${supabaseAnonKey}`
-        },
+        headers: { 'apikey': supabaseAnonKey, 'Authorization': `Bearer ${supabaseAnonKey}` },
         signal: controller.signal
       })
-      
       clearTimeout(timeoutId)
-      
-      if (response.ok) {
-        cloudList = await response.json()
-      }
+      if (response.ok) cloudList = await response.json()
     } catch (e) { console.log('Error fetching ANC visits:', e) }
   }
   
   const allVisits = [...localList, ...cloudList]
   return allVisits.sort((a, b) => a.visit_number - b.visit_number)
-}
-
-async function saveAncVisit(visit: AncVisit, isOnline: boolean): Promise<{ local: boolean; cloud: boolean }> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  
-  // 1. ALWAYS save to localStorage
-  const localKey = `anc_visits_${visit.patient_id}`
-  const existing = localStorage.getItem(localKey)
-  const visits = existing ? JSON.parse(existing) : []
-  visits.push(visit)
-  localStorage.setItem(localKey, JSON.stringify(visits))
-  console.log('💾 Saved to localStorage')
-  
-  let cloudSaved = false
-  
-  // 2. Try to save to Supabase if online
-  if (isOnline && supabaseUrl && supabaseAnonKey) {
-    try {
-      const { id, ...dataWithoutId } = visit as any
-      
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 10000)
-      
-      const response = await fetch(`${supabaseUrl}/rest/v1/anc_visits`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseAnonKey,
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(dataWithoutId),
-        signal: controller.signal
-      })
-      
-      clearTimeout(timeoutId)
-      
-      if (response.ok) {
-        cloudSaved = true
-        console.log('✅ Saved to Supabase cloud!')
-      }
-    } catch (error) {
-      console.log('❌ Supabase save error:', error)
-    }
-  }
-  
-  return { local: true, cloud: cloudSaved }
 }
 
 function calculateNextVisitDate(gestationalAge: number | null, isHighRisk: boolean): string | null {
@@ -266,32 +190,54 @@ function calculateNextVisitDate(gestationalAge: number | null, isHighRisk: boole
   return nextDate.toISOString().split('T')[0]
 }
 
-function checkAlerts(visit: Partial<AncVisit>): string[] {
+// THE UPGRADED TRIAGE SYSTEM
+function checkAlerts(visit: Partial<AncVisit>): { alerts: string[], isCritical: boolean } {
   const alerts: string[] = []
-  if (visit.blood_pressure_systolic && visit.blood_pressure_systolic >= 140) {
-    alerts.push('🔴 HIGH BLOOD PRESSURE - Possible pre-eclampsia')
+  let isCritical = false;
+
+  // Blood Pressure Logic
+  if (visit.blood_pressure_systolic || visit.blood_pressure_diastolic) {
+    const sys = visit.blood_pressure_systolic || 0;
+    const dia = visit.blood_pressure_diastolic || 0;
+    
+    if (sys >= 160 || dia >= 110) {
+      alerts.push(`🚨 SEVERE PRE-ECLAMPSIA RISK (BP ${sys}/${dia}) - IMMEDIATE REFERRAL REQUIRED`);
+      isCritical = true;
+    } else if (sys >= 140 || dia >= 90) {
+      alerts.push(`🟠 HIGH BLOOD PRESSURE (BP ${sys}/${dia}) - Monitor closely`);
+    }
   }
-  if (visit.urine_protein === 'Positive') {
-    alerts.push('🔴 PROTEIN IN URINE - Possible pre-eclampsia')
+
+  // Fetal Heart Rate Logic
+  if (visit.fetal_heart_rate) {
+    if (visit.fetal_heart_rate < 110 || visit.fetal_heart_rate > 160) {
+      alerts.push(`🚨 ABNORMAL FETAL HEART RATE (${visit.fetal_heart_rate} bpm) - Fetal distress possible`);
+      isCritical = true;
+    }
   }
-  if (visit.hemoglobin && visit.hemoglobin < 10) {
-    alerts.push('🟠 ANEMIA - Hemoglobin below 10 g/dL')
+
+  // Lab Results
+  if (visit.urine_protein === 'Positive' || visit.urine_protein === '++' || visit.urine_protein === '+++') {
+    alerts.push('🚨 SIGNIFICANT PROTEIN IN URINE - Pre-eclampsia indicator');
+    isCritical = true;
   }
+  if (visit.hemoglobin && visit.hemoglobin < 7) {
+    alerts.push(`🚨 SEVERE ANEMIA (Hb ${visit.hemoglobin} g/dL) - High risk for hemorrhage`);
+    isCritical = true;
+  } else if (visit.hemoglobin && visit.hemoglobin < 10) {
+    alerts.push(`🟠 MILD ANEMIA (Hb ${visit.hemoglobin} g/dL) - Prescribe Iron/Folate`);
+  }
+
   if (visit.danger_signs && visit.danger_signs.length > 0) {
-    alerts.push('🔴 DANGER SIGNS PRESENT - Urgent referral needed')
+    alerts.push(`🚨 DANGER SIGNS REPORTED: ${visit.danger_signs.join(', ')}`);
+    isCritical = true;
   }
-  return alerts
+
+  return { alerts, isCritical }
 }
 
-async function sendDangerSignAlerts(
-  dangerSigns: string[], 
-  patient: Patient, 
-  facilityName: string
-) {
-  const criticalSigns = dangerSigns.filter(sign => 
-    CRITICAL_DANGER_SIGNS.includes(sign)
-  );
-
+async function sendDangerSignAlerts(dangerSigns: string[], patient: Patient, facilityName: string) {
+  const criticalSigns = dangerSigns.filter(sign => CRITICAL_DANGER_SIGNS.includes(sign));
   if (criticalSigns.length > 0) {
     for (const sign of criticalSigns) {
       await smsService.sendDangerSignAlert({
@@ -303,8 +249,6 @@ async function sendDangerSignAlerts(
         chwName: localStorage.getItem('chw_name') || 'CHW'
       });
     }
-    
-    alert(`⚠️ CRITICAL: ${criticalSigns.join(', ')} detected! Emergency SMS sent to supervisor.`);
   }
 }
 
@@ -319,7 +263,7 @@ export default function AncPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('success')
-  const [alerts, setAlerts] = useState<string[]>([])
+  const [triageStatus, setTriageStatus] = useState<{alerts: string[], isCritical: boolean}>({alerts: [], isCritical: false})
   const searchRef = useRef<HTMLDivElement>(null)
   
   const [formData, setFormData] = useState<Partial<AncVisit>>({
@@ -342,7 +286,6 @@ export default function AncPage() {
     notes: '',
   })
 
-  // Check connection status
   useEffect(() => {
     async function checkConnection() {
       const online = await isSupabaseReachable()
@@ -353,7 +296,6 @@ export default function AncPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Load all patients on mount
   useEffect(() => {
     async function loadPatients() {
       const patients = await getAllPatients()
@@ -363,7 +305,47 @@ export default function AncPage() {
     loadPatients()
   }, [])
 
-  // Filter patients when search term changes
+  // THE SILENT POSTMAN (ANC EDITION)
+  useEffect(() => {
+    async function triggerSync() {
+      if (!navigator.onLine) return;
+      try {
+        const { getPendingSyncQueue, markAsSynced } = await import('@/lib/db');
+        const queue = await getPendingSyncQueue();
+        if (queue.length === 0) return;
+
+        for (const item of queue) {
+          if (item.table === 'anc_visits' && item.operation === 'INSERT') {
+            const { pending_sync, synced, last_modified, id, ...cleanData } = item.data;
+            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+            const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+            
+            const response = await fetch(`${supabaseUrl}/rest/v1/anc_visits`, {
+              method: 'POST',
+              headers: {
+                'apikey': supabaseAnonKey as string,
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(cleanData)
+            })
+            
+            if (response.ok) {
+              await markAsSynced(item.table, item.data.id);
+              console.log(`✅ Postman Delivered: ANC Visit ${id} to cloud.`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("❌ ANC Postman error:", error);
+      }
+    }
+
+    triggerSync();
+    window.addEventListener('online', triggerSync);
+    return () => window.removeEventListener('online', triggerSync);
+  }, []);
+
   useEffect(() => {
     if (searchTerm.trim() === '') {
       setFilteredPatients(allPatients)
@@ -378,7 +360,6 @@ export default function AncPage() {
     }
   }, [searchTerm, allPatients])
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -389,7 +370,6 @@ export default function AncPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Load existing visits when patient is selected
   useEffect(() => {
     if (selectedPatient) {
       getPatientAncVisits(selectedPatient.patient_id).then(visits => {
@@ -400,10 +380,10 @@ export default function AncPage() {
     }
   }, [selectedPatient])
 
-  // Check alerts
+  // Real-time Triage check
   useEffect(() => {
-    const newAlerts = checkAlerts(formData)
-    setAlerts(newAlerts)
+    const status = checkAlerts(formData)
+    setTriageStatus(status)
   }, [formData])
 
   function handleSelectPatient(patient: Patient) {
@@ -447,9 +427,10 @@ export default function AncPage() {
     
     try {
       const visitId = `ANC-${selectedPatient.patient_id}-${formData.visit_number}-${Date.now()}`
-      const nextVisitDate = calculateNextVisitDate(formData.gestational_age || null, formData.is_high_risk || false)
+      const nextVisitDate = calculateNextVisitDate(formData.gestational_age || null, formData.is_high_risk || triageStatus.isCritical)
       
-      const visit: AncVisit = {
+      const visitData = {
+        id: visitId, // Required for Dexie
         visit_id: visitId,
         patient_id: selectedPatient.patient_id,
         visit_number: formData.visit_number || 1,
@@ -466,38 +447,27 @@ export default function AncPage() {
         urine_glucose: formData.urine_glucose || 'Negative',
         hemoglobin: formData.hemoglobin || null,
         danger_signs: formData.danger_signs || [],
-        is_high_risk: formData.is_high_risk || false,
+        is_high_risk: formData.is_high_risk || triageStatus.isCritical,
         risk_factors: formData.risk_factors || [],
         next_visit_date: nextVisitDate,
         notes: formData.notes || '',
         visit_date: new Date().toISOString(),
-        synced_to_cloud: false,
       }
       
-      const isOnline = connectionStatus === 'online'
-      const result = await saveAncVisit(visit, isOnline)
+      // THE FIX: We bypass localStorage and use the Dexie Outbox!
+      await saveOffline('anc_visits', visitData);
       
-      // Send SMS alerts for danger signs
-      if (visit.danger_signs && visit.danger_signs.length > 0 && selectedPatient) {
+      if (visitData.danger_signs && visitData.danger_signs.length > 0 && selectedPatient) {
         await sendDangerSignAlerts(
-          visit.danger_signs,
+          visitData.danger_signs,
           selectedPatient,
           localStorage.getItem('facility_name') || 'Health Facility'
         );
       }
       
-      if (result.cloud) {
-        setMessageType('success')
-        setMessage(`✅ ANC Visit #${visit.visit_number} saved to CLOUD and local storage!`)
-      } else if (result.local && isOnline) {
-        setMessageType('warning')
-        setMessage(`⚠️ ANC Visit #${visit.visit_number} saved locally only. Cloud save failed.`)
-      } else {
-        setMessageType('success')
-        setMessage(`✅ ANC Visit #${visit.visit_number} saved locally! Will sync when online.`)
-      }
+      setMessageType('success')
+      setMessage(`✅ ANC Visit #${visitData.visit_number} safely stored in Offline Outbox!`)
       
-      // Reset form
       setFormData({
         visit_number: existingVisits.length + 2,
         gestational_age: null,
@@ -520,10 +490,14 @@ export default function AncPage() {
       
       const updated = await getPatientAncVisits(selectedPatient.patient_id)
       setExistingVisits(updated)
+
+      if (navigator.onLine) {
+        window.dispatchEvent(new Event('online'));
+      }
       
     } catch (error) {
       setMessageType('error')
-      setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setMessage(`❌ Error saving: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
@@ -533,28 +507,25 @@ export default function AncPage() {
     <>
       <Navigation />
       <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-4xl mx-auto px-4">
+        <div className="max-w-5xl mx-auto px-4">
           
-          {/* Status Banner */}
           <div className={`mb-6 p-4 rounded-lg text-center ${
             connectionStatus === 'online' ? 'bg-green-100 text-green-800 border-2 border-green-500' : 
-            connectionStatus === 'offline' ? 'bg-red-100 text-red-800 border-2 border-red-500' :
+            connectionStatus === 'offline' ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-500' :
             'bg-gray-100 text-gray-800 border-2 border-gray-500'
           }`}>
             <div className="text-2xl font-bold">
               {connectionStatus === 'online' ? '✅ ONLINE MODE' : 
-               connectionStatus === 'offline' ? '📡 OFFLINE MODE - Saving locally only' :
+               connectionStatus === 'offline' ? '📡 OFFLINE MODE - Data will sync automatically' :
                '⏳ CHECKING CONNECTION...'}
             </div>
           </div>
           
-          {/* Header */}
           <div className="text-center mb-6">
-            <h1 className="text-3xl font-bold text-green-700">Antenatal Care (ANC)</h1>
-            <p className="text-gray-600">Record pregnancy visits and monitor maternal health</p>
+            <h1 className="text-3xl font-bold text-green-700">Antenatal Care (ANC) Triage</h1>
+            <p className="text-gray-600">Record vitals and monitor clinical guardrails</p>
           </div>
           
-          {/* Message */}
           {message && (
             <div className={`mb-4 p-3 rounded-lg ${
               messageType === 'success' ? 'bg-green-100 text-green-700 border border-green-400' : 
@@ -565,7 +536,6 @@ export default function AncPage() {
             </div>
           )}
           
-          {/* Patient Selection Card */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
             <h2 className="text-xl font-bold text-gray-800 mb-4">1. Select Patient</h2>
             
@@ -602,122 +572,156 @@ export default function AncPage() {
             </div>
             
             {selectedPatient && (
-              <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
-                <div className="font-bold text-green-800">{safeString(selectedPatient.full_name)}</div>
-                <div className="text-sm text-gray-600">ID: {safeString(selectedPatient.patient_id)}</div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPatient(null)}
-                  className="mt-2 text-red-600 text-sm"
-                >
+              <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200 flex justify-between items-center">
+                <div>
+                  <div className="font-bold text-green-800 text-lg">{safeString(selectedPatient.full_name)}</div>
+                  <div className="text-sm text-gray-600">ID: {safeString(selectedPatient.patient_id)} | District: {safeString(selectedPatient.district)}</div>
+                </div>
+                <button type="button" onClick={() => setSelectedPatient(null)} className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 font-medium">
                   Change Patient
                 </button>
               </div>
             )}
           </div>
           
-          {/* ANC Form */}
           {selectedPatient && (
-            <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">
-                2. ANC Visit #{formData.visit_number}
-              </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
-              {alerts.length > 0 && (
-                <div className="mb-4 p-3 bg-red-100 border border-red-400 rounded-lg">
-                  <div className="font-bold text-red-800 mb-2">⚠️ ALERTS</div>
-                  {alerts.map((alert, i) => (
-                    <div key={i} className="text-sm text-red-700">{alert}</div>
-                  ))}
-                </div>
-              )}
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Gestational Age (weeks)</label>
-                  <input type="number" name="gestational_age" value={formData.gestational_age || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Weight (kg)</label>
-                  <input type="number" step="0.1" name="weight" value={formData.weight || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Systolic)</label>
-                  <input type="number" name="blood_pressure_systolic" value={formData.blood_pressure_systolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Diastolic)</label>
-                  <input type="number" name="blood_pressure_diastolic" value={formData.blood_pressure_diastolic || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Fetal Heart Rate (bpm)</label>
-                  <input type="number" name="fetal_heart_rate" value={formData.fetal_heart_rate || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
-                <div>
-                  <label className="block text-gray-700 font-medium mb-1">Hemoglobin (g/dL)</label>
-                  <input type="number" step="0.1" name="hemoglobin" value={formData.hemoglobin || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg" />
-                </div>
+              {/* Left Side: The Form */}
+              <div className="lg:col-span-2">
+                <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
+                  <h2 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
+                    2. Clinical Vitals (Visit #{formData.visit_number})
+                  </h2>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Gestational Age (weeks)</label>
+                      <input type="number" name="gestational_age" value={formData.gestational_age || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:border-green-500" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Weight (kg)</label>
+                      <input type="number" step="0.1" name="weight" value={formData.weight || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:border-green-500" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Systolic)</label>
+                      <input type="number" name="blood_pressure_systolic" value={formData.blood_pressure_systolic || ''} onChange={handleChange} 
+                        className={`w-full px-3 py-2 border rounded-lg focus:border-green-500 ${formData.blood_pressure_systolic && formData.blood_pressure_systolic >= 140 ? 'bg-red-50 border-red-500 text-red-700 font-bold' : ''}`} 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Blood Pressure (Diastolic)</label>
+                      <input type="number" name="blood_pressure_diastolic" value={formData.blood_pressure_diastolic || ''} onChange={handleChange} 
+                        className={`w-full px-3 py-2 border rounded-lg focus:border-green-500 ${formData.blood_pressure_diastolic && formData.blood_pressure_diastolic >= 90 ? 'bg-red-50 border-red-500 text-red-700 font-bold' : ''}`} 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Fetal Heart Rate (bpm)</label>
+                      <input type="number" name="fetal_heart_rate" value={formData.fetal_heart_rate || ''} onChange={handleChange} 
+                         className={`w-full px-3 py-2 border rounded-lg focus:border-green-500 ${(formData.fetal_heart_rate && (formData.fetal_heart_rate < 110 || formData.fetal_heart_rate > 160)) ? 'bg-red-50 border-red-500 text-red-700 font-bold' : ''}`}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Hemoglobin (g/dL)</label>
+                      <input type="number" step="0.1" name="hemoglobin" value={formData.hemoglobin || ''} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:border-green-500" />
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Urine Protein</label>
+                      <select name="urine_protein" value={formData.urine_protein} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:border-green-500">
+                        <option value="Negative">Negative</option>
+                        <option value="Trace">Trace</option>
+                        <option value="Positive">Positive (+)</option>
+                        <option value="++">++</option>
+                        <option value="+++">+++</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-gray-700 font-medium mb-1">Edema (Swelling)</label>
+                      <select name="edema" value={formData.edema} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:border-green-500">
+                        <option value="None">None</option>
+                        <option value="Mild (Feet/Ankles)">Mild (Feet/Ankles)</option>
+                        <option value="Severe (Face/Hands)">Severe (Face/Hands)</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-6 border-t pt-4">
+                    <label className="block text-gray-800 font-bold mb-2">Danger Signs Reported by Mother</label>
+                    <div className="grid grid-cols-2 gap-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                      {['Severe headache', 'Blurred vision', 'Swelling of hands/face', 'Fever', 'Severe abdominal pain', 'Reduced fetal movement', 'Vaginal bleeding', 'Convulsions', 'Difficulty breathing'].map((sign) => (
+                        <label key={sign} className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" name="danger_signs" value={sign} checked={formData.danger_signs?.includes(sign)} onChange={handleChange} className="w-4 h-4 text-red-600 focus:ring-red-500 border-gray-300 rounded" />
+                          <span className="text-sm font-medium text-gray-700 hover:text-gray-900">{sign}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="mt-6">
+                    <label className="block text-gray-700 font-medium mb-1">Clinical Notes</label>
+                    <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="w-full px-3 py-2 border rounded-lg focus:border-green-500" placeholder="Add any additional observations here..." />
+                  </div>
+                  
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className={`w-full mt-6 py-4 rounded-lg text-white font-bold text-lg shadow-lg ${loading ? 'bg-gray-400' : triageStatus.isCritical ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {loading ? 'Saving...' : triageStatus.isCritical ? '🚨 LOG HIGH RISK VISIT' : '✅ Save ANC Visit'}
+                  </button>
+                </form>
               </div>
-              
-              <div className="mt-4">
-                <label className="block text-gray-700 font-medium mb-2">Danger Signs (Check all that apply)</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['Severe headache', 'Blurred vision', 'Swelling of hands/face', 'Fever', 'Severe abdominal pain', 'Reduced fetal movement', 'Vaginal bleeding', 'Convulsions', 'Difficulty breathing'].map((sign) => (
-                    <label key={sign} className="flex items-center gap-2">
-                      <input type="checkbox" name="danger_signs" value={sign} checked={formData.danger_signs?.includes(sign)} onChange={handleChange} />
-                      <span className="text-sm">{sign}</span>
-                    </label>
-                  ))}
+
+              {/* Right Side: The Clinical Dashboard */}
+              <div className="space-y-6">
+                
+                {/* Real-time Triage Guardrail Box */}
+                <div className={`rounded-lg shadow-md p-6 border-t-8 ${triageStatus.isCritical ? 'bg-red-50 border-red-600' : triageStatus.alerts.length > 0 ? 'bg-orange-50 border-orange-500' : 'bg-green-50 border-green-500'}`}>
+                  <h2 className={`text-xl font-black mb-4 flex items-center gap-2 ${triageStatus.isCritical ? 'text-red-700' : triageStatus.alerts.length > 0 ? 'text-orange-700' : 'text-green-700'}`}>
+                    {triageStatus.isCritical ? '🚨 CRITICAL ALERTS' : triageStatus.alerts.length > 0 ? '⚠️ WARNINGS' : '🟢 ALL CLEAR'}
+                  </h2>
+                  
+                  {triageStatus.alerts.length > 0 ? (
+                    <ul className="space-y-3">
+                      {triageStatus.alerts.map((alert, i) => (
+                        <li key={i} className={`p-3 rounded font-bold text-sm ${alert.includes('🚨') ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-orange-100 text-orange-800 border border-orange-300'}`}>
+                          {alert}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-green-700 font-medium">Vitals are within normal clinical ranges. No danger signs detected.</p>
+                  )}
+                  
+                  {triageStatus.isCritical && (
+                    <div className="mt-4 p-3 bg-red-600 text-white font-bold rounded shadow text-center">
+                      MANDATORY REFERRAL REQUIRED
+                    </div>
+                  )}
                 </div>
-              </div>
-              
-              <div className="mt-4">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" name="is_high_risk" checked={formData.is_high_risk} onChange={handleChange} />
-                  <span className="font-medium">Mark as High Risk Pregnancy</span>
-                </label>
-              </div>
-              
-              <div className="mt-4">
-                <label className="block text-gray-700 font-medium mb-1">Clinical Notes</label>
-                <textarea name="notes" value={formData.notes} onChange={handleChange} rows={3} className="w-full px-3 py-2 border rounded-lg" />
-              </div>
-              
-              <button
-                type="submit"
-                disabled={loading}
-                className={`w-full mt-6 py-3 rounded-lg text-white font-medium ${loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
-              >
-                {loading ? 'Saving...' : 'Save ANC Visit'}
-              </button>
-            </form>
-          )}
-          
-          {/* Visit History */}
-          {selectedPatient && existingVisits.length > 0 && (
-            <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-4">Visit History</h2>
-              <div className="overflow-x-auto">
-                <table className="min-w-full">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="p-2 text-left">Visit #</th>
-                      <th className="p-2 text-left">Date</th>
-                      <th className="p-2 text-left">Weeks</th>
-                      <th className="p-2 text-left">Risk</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {existingVisits.map((visit) => (
-                      <tr key={visit.visit_id} className="border-t">
-                        <td className="p-2">{visit.visit_number}</td>
-                        <td className="p-2">{new Date(visit.visit_date).toLocaleDateString()}</td>
-                        <td className="p-2">{visit.gestational_age || '-'}</td>
-                        <td className="p-2">{visit.is_high_risk ? '🔴 High' : '🟢 Normal'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+                {/* Visit History */}
+                <div className="bg-white rounded-lg shadow-md p-6">
+                  <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">Patient History</h2>
+                  {existingVisits.length === 0 ? (
+                    <p className="text-gray-500 italic text-sm">No previous visits recorded.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {existingVisits.slice().reverse().map((visit) => (
+                        <div key={visit.visit_id} className={`p-3 border rounded text-sm ${visit.is_high_risk ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                          <div className="flex justify-between font-bold mb-1">
+                            <span>Visit #{visit.visit_number}</span>
+                            <span>{new Date(visit.visit_date).toLocaleDateString('en-GB')}</span>
+                          </div>
+                          <div className="text-gray-600">Gestational Age: {visit.gestational_age || '-'} wks</div>
+                          <div className="text-gray-600">BP: {visit.blood_pressure_systolic || '-'}/{visit.blood_pressure_diastolic || '-'}</div>
+                          {visit.is_high_risk && <div className="text-red-600 font-bold mt-1 text-xs">FLAGGED HIGH RISK</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
               </div>
             </div>
           )}
