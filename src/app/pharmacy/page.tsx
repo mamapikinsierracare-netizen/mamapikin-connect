@@ -74,6 +74,8 @@ type Dispensing = {
   quantity_dispensed: number
   dispensed_by: string
   dispensing_date: string
+  inventory_id?: string // Tracked for postman
+  prescription_id?: string // Tracked for postman
 }
 
 const getSupabaseUrl = (): string => {
@@ -215,7 +217,7 @@ export default function PharmacyPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // THE SILENT POSTMAN
+  // THE SILENT POSTMAN (Upgraded to handle Dispensings & Patches)
   useEffect(() => {
     async function triggerSync() {
       if (!navigator.onLine) return;
@@ -229,15 +231,37 @@ export default function PharmacyPage() {
         console.log(`📮 Postman woke up! Found ${queue.length} items in the Outbox.`);
 
         for (const item of queue) {
+          // Sync Prescriptions
           if (item.table === 'prescriptions' && item.operation === 'INSERT') {
             const { pending_sync, synced, last_modified, id, ...cleanData } = item.data;
             const supabaseData = { ...cleanData, prescription_id: id };
-
             const success = await postToSupabase('prescriptions', supabaseData);
-            
             if (success) {
               await markAsSynced(item.table, item.data.id);
               console.log(`✅ Delivered! Prescription ${id} is now in the cloud.`);
+            }
+          }
+
+          // Sync Dispensings & Trigger Cloud Patches
+          if (item.table === 'dispensings' && item.operation === 'INSERT') {
+            const { pending_sync, synced, last_modified, id, inventory_id, prescription_id, ...cleanData } = item.data;
+            const supabaseData = { ...cleanData, dispensing_id: id };
+            const success = await postToSupabase('dispensings', supabaseData);
+            
+            if (success) {
+              // If it synced successfully, apply the necessary patches to the cloud
+              if (prescription_id) await patchToSupabase('prescriptions', 'prescription_id', prescription_id, { status: 'dispensed' });
+              
+              // We refetch inventory to ensure accuracy if we were offline
+              if (inventory_id) {
+                const freshInv = await fetchFromSupabase<Inventory>(`inventory?inventory_id=eq.${inventory_id}`);
+                if (freshInv.length > 0) {
+                   await patchToSupabase('inventory', 'inventory_id', inventory_id, { quantity_current: freshInv[0].quantity_current - cleanData.quantity_dispensed });
+                }
+              }
+
+              await markAsSynced(item.table, item.data.id);
+              console.log(`✅ Delivered! Dispensing ${id} synced and inventory patched.`);
             }
           }
         }
@@ -350,7 +374,6 @@ export default function PharmacyPage() {
       const actualPatientId = selectedPatient.patient_id || selectedPatient.id || 'unknown';
       const prescriptionId = `RX-${actualPatientId}-${Date.now()}`
       
-      // THE FIX: We put ALL the required missing fields back into the envelope!
       const prescriptionData = {
         id: prescriptionId, 
         patient_id: actualPatientId,
@@ -364,13 +387,16 @@ export default function PharmacyPage() {
         diagnosis: formData.diagnosis,
         notes: '',
         status: 'pending',
-        prescribed_by: user?.full_name || user?.email || 'Unknown',
+        prescribed_by: user?.user_metadata?.full_name || user?.email || 'Unknown',
         prescribed_by_role: user?.role || 'Unknown',
         prescription_date: new Date().toISOString().split('T')[0],
         created_at: new Date().toISOString()
       }
       
       await saveOffline('prescriptions', prescriptionData);
+      
+      // Optimistically update UI
+      setPrescriptions([prescriptionData as any, ...prescriptions])
       
       setMessage('✅ Prescription safely stored in Offline Outbox!')
       setMessageType('success')
@@ -433,30 +459,35 @@ export default function PharmacyPage() {
     }
 
     try {
-      // THE FIX: We add the prescription_id and medicine_id so the database has the full story!
-      const dispensingRecord = {
-        dispensing_id: `DISP-${Date.now()}`,
-        prescription_id: pres.prescription_id, 
+      const dispId = `DISP-${Date.now()}`;
+      
+      const dispensingRecord: Dispensing = {
+        dispensing_id: dispId,
         patient_id: pres.patient_id,
         patient_name: pres.patient_name,
-        medicine_id: pres.medicine_id,
         medicine_name: pres.medicine_name,
         quantity_dispensed: pres.quantity,
-        dispensed_by: user?.full_name || 'Nurse',
-        dispensing_date: new Date().toISOString()
+        dispensed_by: user?.user_metadata?.full_name || 'Pharmacist',
+        dispensing_date: new Date().toISOString(),
+        inventory_id: batchToUse.inventory_id, // Attached for Postman syncing
+        prescription_id: pres.prescription_id // Attached for Postman syncing
       };
 
-      await postToSupabase('dispensings', dispensingRecord);
-      await patchToSupabase('prescriptions', 'prescription_id', pres.prescription_id, { status: 'dispensed' });
-      await patchToSupabase('inventory', 'inventory_id', batchToUse.inventory_id, { 
-        quantity_current: batchToUse.quantity_current - pres.quantity 
-      });
+      // 1. SAVE TO OFFLINE OUTBOX
+      await saveOffline('dispensings', { id: dispId, ...dispensingRecord });
 
-      setMessage('✅ Medicine dispensed successfully!');
+      // 2. OPTIMISTIC UI UPDATES (Updates the screen immediately, even without wifi)
+      setPrescriptions(prev => prev.map(p => p.prescription_id === pres.prescription_id ? { ...p, status: 'dispensed' } : p));
+      setInventory(prev => prev.map(i => i.inventory_id === batchToUse.inventory_id ? { ...i, quantity_current: i.quantity_current - pres.quantity } : i));
+      setDispensings([dispensingRecord, ...dispensings]);
+
+      setMessage('✅ Medicine dispensed! Data stored safely offline.');
       setMessageType('success');
       
-      await loadData();
-      await loadPrescriptionsAndDispensings();
+      // 3. WAKE THE POSTMAN
+      if (navigator.onLine) {
+         window.dispatchEvent(new Event('online'));
+      }
 
     } catch (err) {
       setMessage('❌ System Error during dispensing.');
