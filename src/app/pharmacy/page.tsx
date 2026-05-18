@@ -200,7 +200,15 @@ export default function PharmacyPage() {
     diagnosis: ''
   })
 
+  // State for Receiving New Stock (Pharmacy Manager Workflow)
+  const [showAddStock, setShowAddStock] = useState(false)
+  const [stockData, setStockData] = useState({ medicine_id: '', batch_number: '', quantity: 100, expiry_date: '', storage_location: '' })
+
   const canDispense = hasPermission('canDispenseMedication')
+
+  // ROLE CHECK: Only Admins or Pharmacy Managers can add new boxes to the shelf
+  const userRole = ((user as any)?.role || '').toLowerCase()
+  const canManageInventory = ['admin', 'pharmacy_manager', 'chief_pharmacist'].includes(userRole)
 
   useEffect(() => {
     loadData()
@@ -217,7 +225,7 @@ export default function PharmacyPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // THE SILENT POSTMAN (Fixed to handle dispensings offline)
+  // THE SILENT POSTMAN (Fixed to handle dispensings offline + inventory)
   useEffect(() => {
     async function triggerSync() {
       if (!navigator.onLine) return;
@@ -260,8 +268,19 @@ export default function PharmacyPage() {
               await markAsSynced(item.table, item.data.id);
             }
           }
+
+          // Sync New Stock Additions
+          if (item.table === 'inventory' && item.operation === 'INSERT') {
+            const { pending_sync, synced, last_modified, id, ...cleanData } = item.data;
+            const supabaseData = { ...cleanData, inventory_id: id };
+            const success = await postToSupabase('inventory', supabaseData);
+            if (success) {
+              await markAsSynced(item.table, item.data.id);
+            }
+          }
         }
         
+        await loadData();
         await loadPrescriptionsAndDispensings();
         
       } catch (error) {
@@ -373,6 +392,45 @@ export default function PharmacyPage() {
     } else {
       setFormData({ ...formData, [name]: value })
     }
+  }
+
+  async function handleAddStock(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    try {
+      const invId = `INV-${Date.now()}`
+      const newStockData = {
+        id: invId,
+        inventory_id: invId,
+        medicine_id: stockData.medicine_id,
+        batch_number: stockData.batch_number.toUpperCase(),
+        expiry_date: stockData.expiry_date,
+        quantity_received: stockData.quantity,
+        quantity_current: stockData.quantity,
+        quantity_dispensed: 0,
+        quantity_wasted: 0,
+        unit_cost: null,
+        selling_price: null,
+        received_date: new Date().toISOString(),
+        storage_location: stockData.storage_location,
+        status: 'active'
+      }
+      
+      await saveOffline('inventory', newStockData)
+      setInventory([newStockData as any, ...inventory])
+      
+      setMessage(`✅ Received ${stockData.quantity} units into inventory at ${stockData.storage_location}!`)
+      setMessageType('success')
+      setShowAddStock(false)
+      setStockData({ medicine_id: '', batch_number: '', quantity: 100, expiry_date: '', storage_location: '' })
+      
+      if (navigator.onLine) window.dispatchEvent(new Event('online'));
+    } catch (err) {
+      setMessage('❌ Failed to save new stock.')
+      setMessageType('error')
+    }
+    setLoading(false)
+    setTimeout(() => setMessage(''), 4000)
   }
 
   async function handleSubmitPrescription(e: React.FormEvent) {
@@ -593,57 +651,108 @@ export default function PharmacyPage() {
           </div>
           
           {activeTab === 'inventory' && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
-              {loading ? (
-                <div className="p-8 text-center text-gray-500">Loading inventory...</div>
-              ) : inventory.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">No inventory items found.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medicine</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiry</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {inventory.map((item) => {
-                        const medicine = medicines.find(m => m.medicine_id === item.medicine_id)
-                        const expiryStatus = getExpiryStatus(item.expiry_date)
-                        const isLow = item.quantity_current <= (medicine?.reorder_level || 10)
-                        
-                        return (
-                          <tr key={item.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-3">
-                              <div className="font-medium">{medicine?.generic_name || item.medicine_id}</div>
-                              <div className="text-xs text-gray-500">{medicine?.brand_name}</div>
-                            </td>
-                            <td className="px-4 py-3 text-sm">{item.batch_number}</td>
-                            <td className="px-4 py-3">
-                              <span className={`font-medium ${isLow ? 'text-red-600' : 'text-green-600'}`}>
-                                {item.quantity_current} {medicine?.unit || 'units'}
-                              </span>
-                              {isLow && <div className="text-xs text-red-500">Reorder at {medicine?.reorder_level}</div>}
-                            </td>
-                            <td className="px-4 py-3 text-sm">{formatDate(item.expiry_date)}</td>
-                            <td className="px-4 py-3">
-                              <span className={`px-2 py-1 rounded-full text-xs ${expiryStatus.color}`}>
-                                {expiryStatus.text}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm">{item.storage_location || '-'}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+            <div className="space-y-6">
+              {/* PHARMACY MANAGER CONTROLS */}
+              {canManageInventory && (
+                <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-indigo-500">
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <h2 className="text-lg font-black text-indigo-900">Manager Controls</h2>
+                      <p className="text-sm text-gray-600">You have clearance to log new shipments and set physical storage locations.</p>
+                    </div>
+                    <button onClick={() => setShowAddStock(!showAddStock)} className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-sm transition-transform hover:-translate-y-1">
+                      {showAddStock ? 'Cancel' : '📦 Receive New Stock'}
+                    </button>
+                  </div>
+
+                  {showAddStock && (
+                    <form onSubmit={handleAddStock} className="bg-indigo-50 p-4 rounded-lg border border-indigo-200 mt-4 animate-fade-in-down">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div className="md:col-span-3">
+                          <label className="block text-indigo-900 font-bold mb-1">Select Medicine from Formulary</label>
+                          <select required value={stockData.medicine_id} onChange={(e) => setStockData({...stockData, medicine_id: e.target.value})} className="w-full px-3 py-2 border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500">
+                            <option value="">-- Select --</option>
+                            {medicines.map(m => <option key={m.medicine_id} value={m.medicine_id}>{m.generic_name} {m.brand_name ? `(${m.brand_name})` : ''}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-indigo-900 font-bold mb-1">Batch Number</label>
+                          <input required type="text" value={stockData.batch_number} onChange={(e) => setStockData({...stockData, batch_number: e.target.value})} placeholder="e.g. BATCH-009" className="w-full px-3 py-2 border border-indigo-300 rounded uppercase" />
+                        </div>
+                        <div>
+                          <label className="block text-indigo-900 font-bold mb-1">Quantity Received</label>
+                          <input required type="number" min="1" value={stockData.quantity} onChange={(e) => setStockData({...stockData, quantity: parseInt(e.target.value)})} className="w-full px-3 py-2 border border-indigo-300 rounded" />
+                        </div>
+                        <div>
+                          <label className="block text-indigo-900 font-bold mb-1">Expiry Date</label>
+                          <input required type="date" value={stockData.expiry_date} onChange={(e) => setStockData({...stockData, expiry_date: e.target.value})} className="w-full px-3 py-2 border border-indigo-300 rounded" />
+                        </div>
+                        <div className="md:col-span-3">
+                          <label className="block text-indigo-900 font-bold mb-1">Storage Location</label>
+                          <input required type="text" value={stockData.storage_location} onChange={(e) => setStockData({...stockData, storage_location: e.target.value})} placeholder="e.g. Fridge A, Shelf 2, Cabinet C" className="w-full px-3 py-2 border border-indigo-300 rounded" />
+                          <p className="text-xs text-indigo-600 mt-1">This tells dispensing nurses exactly where to find this batch.</p>
+                        </div>
+                      </div>
+                      <button type="submit" disabled={loading} className="w-full py-3 bg-indigo-700 text-white font-black rounded hover:bg-indigo-800 shadow">
+                        {loading ? 'Saving...' : '✅ Save to Shelf Inventory'}
+                      </button>
+                    </form>
+                  )}
                 </div>
               )}
+
+              <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                {loading ? (
+                  <div className="p-8 text-center text-gray-500">Loading inventory...</div>
+                ) : inventory.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">No inventory items found.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Medicine</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiry</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {inventory.map((item) => {
+                          const medicine = medicines.find(m => m.medicine_id === item.medicine_id)
+                          const expiryStatus = getExpiryStatus(item.expiry_date)
+                          const isLow = item.quantity_current <= (medicine?.reorder_level || 10)
+                          
+                          return (
+                            <tr key={item.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3">
+                                <div className="font-medium">{medicine?.generic_name || item.medicine_id}</div>
+                                <div className="text-xs text-gray-500">{medicine?.brand_name}</div>
+                              </td>
+                              <td className="px-4 py-3 text-sm">{item.batch_number}</td>
+                              <td className="px-4 py-3">
+                                <span className={`font-medium ${isLow ? 'text-red-600' : 'text-green-600'}`}>
+                                  {item.quantity_current} {medicine?.unit || 'units'}
+                                </span>
+                                {isLow && <div className="text-xs text-red-500">Reorder at {medicine?.reorder_level}</div>}
+                              </td>
+                              <td className="px-4 py-3 text-sm">{formatDate(item.expiry_date)}</td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded-full text-xs ${expiryStatus.color}`}>
+                                  {expiryStatus.text}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm font-bold text-indigo-700">{item.storage_location || '-'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           
