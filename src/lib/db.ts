@@ -1,3 +1,4 @@
+// src/lib/db.ts
 import Dexie, { Table } from 'dexie';
 
 // Define the structure of a Patient record for offline storage
@@ -60,7 +61,7 @@ export interface OfflinePrescription {
   last_modified: number;
 }
 
-// Define the structure of a Lab Request for offline storage
+// Define the structure of a Lab Request for offline storage (Legacy)
 export interface OfflineLabRequest {
   id: string;
   patient_id: string;
@@ -92,6 +93,40 @@ export interface OfflineDelivery {
   last_modified: number;
 }
 
+// NEW: Laboratory Order
+export interface OfflineLabOrder {
+  id: string;
+  order_id: string;
+  patient_id: string;
+  patient_name: string;
+  requested_by: string;
+  priority: string;
+  clinical_notes: string;
+  tests_requested: string;
+  status: string;
+  created_at: string;
+  synced: boolean;
+  pending_sync: boolean;
+  last_modified: number;
+}
+
+// NEW: Laboratory Result
+export interface OfflineLabResult {
+  id: string;
+  result_id: string;
+  order_id: string;
+  test_name: string;
+  result_value: string;
+  reference_range: string;
+  flag: string;
+  verified_by: string;
+  status: string;
+  created_at: string;
+  synced: boolean;
+  pending_sync: boolean;
+  last_modified: number;
+}
+
 // Define the Sync Queue item structure
 export interface SyncQueueItem {
   id?: number;
@@ -109,18 +144,39 @@ class MamaPikinDB extends Dexie {
   prescriptions!: Table<OfflinePrescription, string>;
   lab_requests!: Table<OfflineLabRequest, string>;
   deliveries!: Table<OfflineDelivery, string>;
+  
+  // New V2 Tables
+  lab_orders!: Table<OfflineLabOrder, string>;
+  lab_results!: Table<OfflineLabResult, string>;
+  dispensings!: Table<any, string>;
+  inventory!: Table<any, string>;
+  
   sync_queue!: Table<SyncQueueItem, number>;
 
   constructor() {
     super('MamaPikinDB');
     
-    // Define database version and schema
+    // V1 Schema
     this.version(1).stores({
       patients: 'id, full_name, phone, district, synced, pending_sync, last_modified',
       anc_visits: 'id, patient_id, visit_date, synced, pending_sync, last_modified',
       prescriptions: 'id, patient_id, synced, pending_sync, last_modified',
       lab_requests: 'id, patient_id, status, synced, pending_sync, last_modified',
       deliveries: 'id, patient_id, delivery_date, synced, pending_sync, last_modified',
+      sync_queue: '++id, operation, table, timestamp, retry_count'
+    });
+
+    // V2 Schema Upgrade: Adding Lab Orders, Results, and Pharmacy tables
+    this.version(2).stores({
+      patients: 'id, full_name, phone, district, synced, pending_sync, last_modified',
+      anc_visits: 'id, patient_id, visit_date, synced, pending_sync, last_modified',
+      prescriptions: 'id, patient_id, synced, pending_sync, last_modified',
+      lab_requests: 'id, patient_id, status, synced, pending_sync, last_modified',
+      deliveries: 'id, patient_id, delivery_date, synced, pending_sync, last_modified',
+      lab_orders: 'id, order_id, patient_id, status, created_at, synced, pending_sync, last_modified',
+      lab_results: 'id, result_id, order_id, status, created_at, synced, pending_sync, last_modified',
+      dispensings: 'id, dispensing_id, patient_id, prescription_id, synced, pending_sync, last_modified',
+      inventory: 'id, inventory_id, medicine_id, batch_number, synced, pending_sync, last_modified',
       sync_queue: '++id, operation, table, timestamp, retry_count'
     });
   }
@@ -198,22 +254,30 @@ export async function deleteOffline(tableName: string, id: string): Promise<void
   });
 }
 
-// Get all unsynced data from all tables - FIXED: using filter instead of where().equals()
+// Get all unsynced data from all tables
 export async function getUnsyncedData(): Promise<{
   patients: OfflinePatient[];
   anc_visits: OfflineANC[];
   prescriptions: OfflinePrescription[];
   lab_requests: OfflineLabRequest[];
   deliveries: OfflineDelivery[];
+  lab_orders: OfflineLabOrder[];
+  lab_results: OfflineLabResult[];
+  dispensings: any[];
+  inventory: any[];
 }> {
-  // Use filter instead of where().equals() to avoid TypeScript errors with boolean
   const patients = await db.patients.filter(p => p.pending_sync === true).toArray();
   const anc_visits = await db.anc_visits.filter(a => a.pending_sync === true).toArray();
   const prescriptions = await db.prescriptions.filter(p => p.pending_sync === true).toArray();
   const lab_requests = await db.lab_requests.filter(l => l.pending_sync === true).toArray();
   const deliveries = await db.deliveries.filter(d => d.pending_sync === true).toArray();
   
-  return { patients, anc_visits, prescriptions, lab_requests, deliveries };
+  const lab_orders = await db.lab_orders.filter(l => l.pending_sync === true).toArray();
+  const lab_results = await db.lab_results.filter(l => l.pending_sync === true).toArray();
+  const dispensings = await db.dispensings.filter(d => d.pending_sync === true).toArray();
+  const inventory = await db.inventory.filter(i => i.pending_sync === true).toArray();
+  
+  return { patients, anc_visits, prescriptions, lab_requests, deliveries, lab_orders, lab_results, dispensings, inventory };
 }
 
 // Mark a record as synced
@@ -221,7 +285,7 @@ export async function markAsSynced(tableName: string, id: string): Promise<void>
   const dbTable = db[tableName as keyof MamaPikinDB] as Table;
   await dbTable.update(id, { synced: true, pending_sync: false });
   
-  // Remove from sync queue - FIXED: using filter and delete
+  // Remove from sync queue
   const items = await db.sync_queue.filter(item => item.data?.id === id).toArray();
   for (const item of items) {
     if (item.id) {
@@ -250,7 +314,7 @@ export async function getOfflinePatients(): Promise<OfflinePatient[]> {
   return await db.patients.toArray();
 }
 
-// Get offline patients by district - FIXED: using filter
+// Get offline patients by district
 export async function getOfflinePatientsByDistrict(district: string): Promise<OfflinePatient[]> {
   return await db.patients.filter(p => p.district === district).toArray();
 }
@@ -260,12 +324,12 @@ export async function getOfflinePatientById(id: string): Promise<OfflinePatient 
   return await db.patients.get(id);
 }
 
-// Get offline ANC visits for a patient - FIXED: using filter
+// Get offline ANC visits for a patient
 export async function getOfflineAncVisits(patientId: string): Promise<OfflineANC[]> {
   return await db.anc_visits.filter(a => a.patient_id === patientId).toArray();
 }
 
-// Get offline prescriptions for a patient - FIXED: using filter
+// Get offline prescriptions for a patient
 export async function getOfflinePrescriptions(patientId: string): Promise<OfflinePrescription[]> {
   return await db.prescriptions.filter(p => p.patient_id === patientId).toArray();
 }
@@ -277,6 +341,10 @@ export async function clearAllOfflineData(): Promise<void> {
   await db.prescriptions.clear();
   await db.lab_requests.clear();
   await db.deliveries.clear();
+  await db.lab_orders.clear();
+  await db.lab_results.clear();
+  await db.dispensings.clear();
+  await db.inventory.clear();
   await db.sync_queue.clear();
   console.log('All offline data cleared');
 }
