@@ -1,3 +1,4 @@
+// src/components/Navigation.tsx
 'use client'
 
 import Image from 'next/image'
@@ -23,6 +24,7 @@ export default function Navigation() {
   
   const navItems = [
     { name: 'Home', path: '/', icon: '🏠' },
+    { name: 'CMO Dashboard', path: '/dashboard', icon: '📊' },
     { name: 'Register Patient', path: '/register', icon: '📝' },
     { name: 'Patients', path: '/patients', icon: '🔍' },
     { name: 'Offline Patients', path: '/offline-patients', icon: '📱' },
@@ -47,8 +49,7 @@ export default function Navigation() {
     { name: 'SMS Queue', path: '/sms-queue', icon: '📱' },
     { name: 'DHIS2 Export', path: '/dhis2-export', icon: '📤' },
     { name: 'Request Facility', path: '/facility-request', icon: '🏥' },
-{ name: 'Facility Requests (Admin)', path: '/admin/facility-requests', icon: '✅' },
-<Link href="/dashboard" className="hover:underline font-bold text-yellow-300">📊 CMO Dashboard</Link>
+    { name: 'Facility Requests (Admin)', path: '/admin/facility-requests', icon: '✅' }
   ]
   
   useEffect(() => {
@@ -99,9 +100,9 @@ export default function Navigation() {
                 href={item.path}
                 className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-1 ${
                   pathname === item.path
-                    ? 'bg-green-800 text-white'
+                    ? 'bg-green-800 text-white shadow-inner'
                     : 'hover:bg-green-600'
-                }`}
+                } ${item.name === 'CMO Dashboard' ? 'font-bold text-yellow-300 border border-yellow-500 hover:text-white' : ''}`}
               >
                 <span>{item.icon}</span>
                 <span className="text-sm">{item.name}</span>
