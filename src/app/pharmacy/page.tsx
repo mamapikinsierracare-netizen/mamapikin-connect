@@ -287,18 +287,21 @@ export default function PharmacyPage() {
     setDispensings(disps)
   }
 
+  // 🚀 THIS IS THE FIX: Fetch patients from BOTH local storage AND Supabase Cloud!
   async function searchPatients(term: string): Promise<Patient[]> {
     if (term.length < 2) return []
     
     const results: Patient[] = []
     const seenIds = new Set<string>()
+    const lowerTerm = term.toLowerCase()
     
+    // 1. Search Offline Storage
     const localPatients = localStorage.getItem('offline_patients')
     if (localPatients) {
       const localList = JSON.parse(localPatients)
       const filtered = localList.filter((p: Patient) => {
         const pId = p.patient_id || p.id || '';
-        return p.full_name?.toLowerCase().includes(term.toLowerCase()) || pId.toLowerCase().includes(term.toLowerCase())
+        return p.full_name?.toLowerCase().includes(lowerTerm) || pId.toLowerCase().includes(lowerTerm)
       })
       
       filtered.forEach((p: Patient) => {
@@ -308,6 +311,32 @@ export default function PharmacyPage() {
           results.push(p)
         }
       })
+    }
+
+    // 2. Search Supabase Cloud (Brings back your 21 patients!)
+    try {
+      const supabaseUrl = getSupabaseUrl()
+      const supabaseAnonKey = getSupabaseAnonKey()
+      
+      const response = await fetch(`${supabaseUrl}/rest/v1/patients?or=(full_name.ilike.%${term}%,patient_id.ilike.%${term}%)&limit=15`, {
+        headers: {
+          'apikey': supabaseAnonKey,
+          'Authorization': `Bearer ${supabaseAnonKey}`
+        }
+      })
+      
+      if (response.ok) {
+        const cloudPatients = await response.json()
+        cloudPatients.forEach((p: Patient) => {
+          const uniqueId = p.patient_id || p.id || '';
+          if (!seenIds.has(uniqueId)) {
+            seenIds.add(uniqueId)
+            results.push(p)
+          }
+        })
+      }
+    } catch (e) {
+      console.error("Cloud search failed, reverting to local only", e)
     }
     
     return results
@@ -376,7 +405,6 @@ export default function PharmacyPage() {
         diagnosis: formData.diagnosis,
         notes: '',
         status: 'pending',
-        // BYPASS TYPE ERROR WITH ANY:
         prescribed_by: (user as any)?.full_name || (user as any)?.email || 'Unknown',
         prescribed_by_role: (user as any)?.role || 'Unknown',
         prescription_date: new Date().toISOString().split('T')[0],
@@ -456,7 +484,6 @@ export default function PharmacyPage() {
         patient_name: pres.patient_name,
         medicine_name: pres.medicine_name,
         quantity_dispensed: pres.quantity,
-        // BYPASS TYPE ERROR WITH ANY:
         dispensed_by: (user as any)?.full_name || 'Pharmacist',
         dispensing_date: new Date().toISOString(),
         inventory_id: batchToUse.inventory_id,
