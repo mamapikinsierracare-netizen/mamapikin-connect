@@ -48,6 +48,7 @@ export default function Navigation() {
     { name: 'DHIS2 Export', path: '/dhis2-export', icon: '📤' },
     { name: 'Request Facility', path: '/facility-request', icon: '🏥' },
 { name: 'Facility Requests (Admin)', path: '/admin/facility-requests', icon: '✅' },
+<Link href="/dashboard" className="hover:underline font-bold text-yellow-300">📊 CMO Dashboard</Link>
   ]
   
   useEffect(() => {
