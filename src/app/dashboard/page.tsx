@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
-import Link from 'next/link'
+import RoleGuard from '@/components/RoleGuard'
 
 // --- Interfaces ---
 type Patient = { patient_id: string, registered_at: string, is_pregnant: boolean, is_child_under_5: boolean }
@@ -104,17 +104,17 @@ export default function CmoDashboard() {
 
   if (loading) {
     return (
-      <>
+      <RoleGuard allowedRoles={['admin', 'cmo', 'medical_director']}>
         <Navigation />
         <div className="min-h-screen bg-gray-50 flex justify-center items-center">
           <div className="text-xl font-bold text-gray-500 animate-pulse">Compiling Hospital Analytics...</div>
         </div>
-      </>
+      </RoleGuard>
     )
   }
 
   return (
-    <>
+    <RoleGuard allowedRoles={['admin', 'cmo', 'medical_director']}>
       <Navigation />
       <div className="min-h-screen bg-gray-100 py-8">
         <div className="max-w-7xl mx-auto px-4">
@@ -258,6 +258,6 @@ export default function CmoDashboard() {
 
         </div>
       </div>
-    </>
+    </RoleGuard>
   )
 }
