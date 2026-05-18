@@ -74,8 +74,8 @@ type Dispensing = {
   quantity_dispensed: number
   dispensed_by: string
   dispensing_date: string
-  inventory_id?: string
-  prescription_id?: string
+  inventory_id?: string // Added for Postman syncing
+  prescription_id?: string // Added for Postman syncing
 }
 
 const getSupabaseUrl = (): string => {
@@ -200,6 +200,8 @@ export default function PharmacyPage() {
     diagnosis: ''
   })
 
+  const canDispense = hasPermission('canDispenseMedication')
+
   useEffect(() => {
     loadData()
     loadPrescriptionsAndDispensings()
@@ -215,6 +217,7 @@ export default function PharmacyPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // THE SILENT POSTMAN (Fixed to handle dispensings offline)
   useEffect(() => {
     async function triggerSync() {
       if (!navigator.onLine) return;
@@ -225,16 +228,21 @@ export default function PharmacyPage() {
 
         if (queue.length === 0) return;
 
+        console.log(`📮 Postman woke up! Found ${queue.length} items in the Outbox.`);
+
         for (const item of queue) {
           if (item.table === 'prescriptions' && item.operation === 'INSERT') {
             const { pending_sync, synced, last_modified, id, ...cleanData } = item.data;
             const supabaseData = { ...cleanData, prescription_id: id };
+
             const success = await postToSupabase('prescriptions', supabaseData);
+            
             if (success) {
               await markAsSynced(item.table, item.data.id);
+              console.log(`✅ Delivered! Prescription ${id} is now in the cloud.`);
             }
           }
-
+          
           if (item.table === 'dispensings' && item.operation === 'INSERT') {
             const { pending_sync, synced, last_modified, id, inventory_id, prescription_id, ...cleanData } = item.data;
             const supabaseData = { ...cleanData, dispensing_id: id };
@@ -249,7 +257,6 @@ export default function PharmacyPage() {
                    await patchToSupabase('inventory', 'inventory_id', inventory_id, { quantity_current: freshInv[0].quantity_current - cleanData.quantity_dispensed });
                 }
               }
-
               await markAsSynced(item.table, item.data.id);
             }
           }
@@ -287,7 +294,7 @@ export default function PharmacyPage() {
     setDispensings(disps)
   }
 
-  // 🚀 THIS IS THE FIX: Fetch patients from BOTH local storage AND Supabase Cloud!
+  // FIXED: Searches BOTH Local and Supabase
   async function searchPatients(term: string): Promise<Patient[]> {
     if (term.length < 2) return []
     
@@ -295,7 +302,6 @@ export default function PharmacyPage() {
     const seenIds = new Set<string>()
     const lowerTerm = term.toLowerCase()
     
-    // 1. Search Offline Storage
     const localPatients = localStorage.getItem('offline_patients')
     if (localPatients) {
       const localList = JSON.parse(localPatients)
@@ -312,13 +318,11 @@ export default function PharmacyPage() {
         }
       })
     }
-
-    // 2. Search Supabase Cloud (Brings back your 21 patients!)
+    
     try {
       const supabaseUrl = getSupabaseUrl()
       const supabaseAnonKey = getSupabaseAnonKey()
-      
-      const response = await fetch(`${supabaseUrl}/rest/v1/patients?or=(full_name.ilike.%${term}%,patient_id.ilike.%${term}%)&limit=15`, {
+      const response = await fetch(`${supabaseUrl}/rest/v1/patients?or=(full_name.ilike.%25${term}%25,patient_id.ilike.%25${term}%25)&limit=15`, {
         headers: {
           'apikey': supabaseAnonKey,
           'Authorization': `Bearer ${supabaseAnonKey}`
@@ -336,7 +340,7 @@ export default function PharmacyPage() {
         })
       }
     } catch (e) {
-      console.error("Cloud search failed, reverting to local only", e)
+      console.error("Cloud search failed", e)
     }
     
     return results
@@ -405,7 +409,7 @@ export default function PharmacyPage() {
         diagnosis: formData.diagnosis,
         notes: '',
         status: 'pending',
-        prescribed_by: (user as any)?.full_name || (user as any)?.email || 'Unknown',
+        prescribed_by: (user as any)?.user_metadata?.full_name || (user as any)?.email || 'Unknown',
         prescribed_by_role: (user as any)?.role || 'Unknown',
         prescription_date: new Date().toISOString().split('T')[0],
         created_at: new Date().toISOString()
@@ -414,7 +418,6 @@ export default function PharmacyPage() {
       await saveOffline('prescriptions', prescriptionData);
       
       setPrescriptions([prescriptionData as any, ...prescriptions])
-      
       setMessage('✅ Prescription safely stored in Offline Outbox!')
       setMessageType('success')
       
@@ -484,12 +487,13 @@ export default function PharmacyPage() {
         patient_name: pres.patient_name,
         medicine_name: pres.medicine_name,
         quantity_dispensed: pres.quantity,
-        dispensed_by: (user as any)?.full_name || 'Pharmacist',
+        dispensed_by: (user as any)?.user_metadata?.full_name || (user as any)?.email || 'Pharmacist',
         dispensing_date: new Date().toISOString(),
         inventory_id: batchToUse.inventory_id,
         prescription_id: pres.prescription_id
       };
 
+      // FIXED: Saves offline and optimistically updates UI!
       await saveOffline('dispensings', { id: dispId, ...dispensingRecord });
 
       setPrescriptions(prev => prev.map(p => p.prescription_id === pres.prescription_id ? { ...p, status: 'dispensed' } : p));
