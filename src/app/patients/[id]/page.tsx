@@ -1,3 +1,4 @@
+// src/app/patients/[id]/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -6,6 +7,7 @@ import Link from 'next/link'
 import Navigation from '@/components/Navigation'
 import { QRCodeSVG } from 'qrcode.react'
 
+// --- Types ---
 type Patient = {
   id?: number
   patient_id: string
@@ -109,6 +111,17 @@ type Immunisation = {
   adverse_reaction: boolean
 }
 
+type TimelineEvent = {
+  id: string
+  type: 'ANC' | 'DELIVERY' | 'PNC' | 'IMMUNISATION'
+  date: string
+  title: string
+  subtitle: string
+  details: any
+  isCritical: boolean
+}
+
+// --- Data Fetching ---
 async function isSupabaseReachable(): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -125,7 +138,6 @@ async function fetchPatient(patientId: string): Promise<Patient | null> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
-  // Check localStorage first
   const localPatients = localStorage.getItem('offline_patients')
   if (localPatients) {
     const patients = JSON.parse(localPatients)
@@ -133,7 +145,6 @@ async function fetchPatient(patientId: string): Promise<Patient | null> {
     if (localPatient) return localPatient
   }
   
-  // Check Supabase
   if (supabaseUrl && supabaseAnonKey && await isSupabaseReachable()) {
     try {
       const response = await fetch(`${supabaseUrl}/rest/v1/patients?patient_id=eq.${patientId}`, {
@@ -145,7 +156,6 @@ async function fetchPatient(patientId: string): Promise<Patient | null> {
       }
     } catch { /* ignore */ }
   }
-  
   return null
 }
 
@@ -168,7 +178,6 @@ async function fetchPatientAncVisits(patientId: string): Promise<AncVisit[]> {
       }
     } catch { /* ignore */ }
   }
-  
   return localList.sort((a, b) => a.visit_number - b.visit_number)
 }
 
@@ -191,7 +200,6 @@ async function fetchPatientDeliveries(patientId: string): Promise<Delivery[]> {
       }
     } catch { /* ignore */ }
   }
-  
   return localList
 }
 
@@ -214,7 +222,6 @@ async function fetchPatientPncVisits(patientId: string): Promise<PncVisit[]> {
       }
     } catch { /* ignore */ }
   }
-  
   return localList
 }
 
@@ -237,10 +244,10 @@ async function fetchPatientImmunisations(patientId: string): Promise<Immunisatio
       }
     } catch { /* ignore */ }
   }
-  
   return localList
 }
 
+// --- Formatting Helpers ---
 function formatDate(dateString: string | null): string {
   if (!dateString) return 'Not set'
   return new Date(dateString).toLocaleDateString('en-GB', {
@@ -282,15 +289,17 @@ function downloadQRCode(patientId: string) {
 
 export default function PatientDetailPage() {
   const params = useParams()
-  const patientId = params.id as string
+  const patientId = decodeURIComponent(params.id as string)
   
   const [patient, setPatient] = useState<Patient | null>(null)
   const [ancVisits, setAncVisits] = useState<AncVisit[]>([])
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [pncVisits, setPncVisits] = useState<PncVisit[]>([])
   const [immunisations, setImmunisations] = useState<Immunisation[]>([])
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
+  
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'info' | 'anc' | 'delivery' | 'pnc' | 'immunisation'>('info')
+  const [activeTab, setActiveTab] = useState<'timeline' | 'info' | 'anc' | 'delivery' | 'pnc' | 'immunisation'>('info')
 
   useEffect(() => {
     async function loadData() {
@@ -301,14 +310,46 @@ export default function PatientDetailPage() {
       
       if (patientData) {
         const anc = await fetchPatientAncVisits(patientId)
-        const deliveries = await fetchPatientDeliveries(patientId)
+        const del = await fetchPatientDeliveries(patientId)
         const pnc = await fetchPatientPncVisits(patientId)
-        const immunisations = await fetchPatientImmunisations(patientId)
+        const imm = await fetchPatientImmunisations(patientId)
         
         setAncVisits(anc)
-        setDeliveries(deliveries)
+        setDeliveries(del)
         setPncVisits(pnc)
-        setImmunisations(immunisations)
+        setImmunisations(imm)
+
+        // Build Timeline Array
+        const events: TimelineEvent[] = []
+        
+        anc.forEach(a => events.push({
+          id: a.visit_id, type: 'ANC', date: a.visit_date,
+          title: `ANC Visit #${a.visit_number}`, subtitle: `${a.gestational_age || '?'} Weeks Gestation`,
+          details: a, isCritical: a.is_high_risk || (a.blood_pressure_systolic ?? 0) >= 140
+        }))
+        
+        del.forEach(d => events.push({
+          id: d.delivery_id, type: 'DELIVERY', date: d.delivery_date,
+          title: `Labor & Delivery`, subtitle: `${d.mode_of_delivery} | Baby: ${d.baby_gender}`,
+          details: d, isCritical: d.maternal_outcome !== 'Alive - Well' || d.baby_outcome !== 'Alive - Well'
+        }))
+        
+        pnc.forEach(p => events.push({
+          id: p.visit_id, type: 'PNC', date: p.visit_date,
+          title: `PNC Visit #${p.visit_number} (${p.visit_type})`, subtitle: `BP: ${p.mother_bp_systolic}/${p.mother_bp_diastolic}`,
+          details: p, isCritical: (p.epds_score ?? 0) >= 10
+        }))
+        
+        imm.forEach(i => events.push({
+          id: i.immunisation_id, type: 'IMMUNISATION', date: i.administration_date,
+          title: `Vaccine: ${i.vaccine_name} (Dose ${i.dose_number})`, subtitle: `By: ${i.administered_by}`,
+          details: i, isCritical: i.adverse_reaction
+        }))
+
+        // Deduplicate and Sort
+        const uniqueEvents = Array.from(new Map(events.map(item => [item.id, item])).values())
+        uniqueEvents.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        setTimeline(uniqueEvents)
       }
       
       setLoading(false)
@@ -350,8 +391,8 @@ export default function PatientDetailPage() {
         <div className="min-h-screen bg-gray-50 py-8">
           <div className="max-w-4xl mx-auto px-4">
             <div className="text-center py-12">
-              <div className="text-4xl mb-4">⏳</div>
-              <p className="text-gray-500">Loading patient data...</p>
+              <div className="text-4xl mb-4 animate-bounce">⏳</div>
+              <p className="text-gray-500 font-bold">Loading Unified Patient Record...</p>
             </div>
           </div>
         </div>
@@ -368,7 +409,7 @@ export default function PatientDetailPage() {
             <div className="bg-white rounded-lg shadow-md p-8 text-center">
               <div className="text-6xl mb-4">❌</div>
               <h1 className="text-2xl font-bold text-gray-800 mb-2">Patient Not Found</h1>
-              <p className="text-gray-600 mb-4">The patient you are looking for does not exist.</p>
+              <p className="text-gray-600 mb-4">We couldn't locate ID: {patientId}</p>
               <Link href="/patients" className="text-green-600 hover:underline">← Back to Patient List</Link>
             </div>
           </div>
@@ -381,96 +422,111 @@ export default function PatientDetailPage() {
     <>
       <Navigation />
       <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-5xl mx-auto px-4">
+        <div className="max-w-6xl mx-auto px-4">
           
           {/* Header with Back Button */}
           <div className="flex justify-between items-center mb-6">
-            <Link href="/patients" className="text-green-600 hover:text-green-800">
+            <Link href="/patients" className="text-green-600 hover:text-green-800 font-medium">
               ← Back to Patient List
             </Link>
-            <div className="flex gap-2">
-              <Link 
-                href={`/patient/${patientId}/edit`} 
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                ✏️ Edit Patient
+            <div className="flex flex-wrap gap-2">
+              <Link href={`/patient/${patientId}/edit`} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm">
+                ✏️ Edit
               </Link>
-              <Link 
-                href={`/anc?patient=${patientId}`} 
-                className="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700"
-              >
-                🤰 Record ANC
+              <Link href={`/anc?patient=${patientId}`} className="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 font-medium shadow-sm">
+                🤰 ANC
+              </Link>
+              <Link href={`/delivery?patient=${patientId}`} className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-medium shadow-sm">
+                👶 Delivery
+              </Link>
+              <Link href={`/immunisation?patient=${patientId}`} className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium shadow-sm">
+                💉 Vaccine
               </Link>
             </div>
           </div>
           
           {/* Patient Header Card */}
-          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6 border-t-8 border-green-600">
             <div className="flex justify-between items-start flex-wrap gap-4">
               <div>
-                <h1 className="text-2xl font-bold text-gray-800">{patient.full_name}</h1>
+                <h1 className="text-3xl font-black text-gray-800">{patient.full_name}</h1>
                 <p className="text-gray-500 font-mono text-sm mt-1">ID: {patient.patient_id}</p>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">{getPatientType()}</span>
+                <div className="flex items-center gap-2 mt-3">
+                  <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-bold shadow-sm">{getPatientType()}</span>
                   {getStatusBadge()}
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm text-gray-500">Registered on {formatDate(patient.registered_at)}</p>
-                <p className="text-sm text-gray-500">Account closes on {formatDate(patient.account_closing_date)}</p>
+              <div className="text-right bg-gray-50 p-3 rounded-lg border">
+                <p className="text-sm text-gray-600"><b>Registered:</b> {formatDate(patient.registered_at)}</p>
+                <p className="text-sm text-gray-600 mt-1"><b>Acct Closes:</b> {formatDate(patient.account_closing_date)}</p>
               </div>
             </div>
           </div>
           
           {/* Tab Navigation */}
-          <div className="flex flex-wrap gap-2 mb-6">
-            <button
-              onClick={() => setActiveTab('info')}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'info' ? 'bg-green-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              📋 Personal Info
+          <div className="flex flex-wrap gap-2 mb-6 bg-white p-2 rounded-lg shadow-sm border">
+            <button onClick={() => setActiveTab('info')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'info' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              📋 Info
             </button>
-            <button
-              onClick={() => setActiveTab('anc')}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'anc' ? 'bg-pink-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              🤰 ANC Visits ({ancVisits.length})
+            <button onClick={() => setActiveTab('timeline')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'timeline' ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              ⏳ Master Timeline
             </button>
-            <button
-              onClick={() => setActiveTab('delivery')}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'delivery' ? 'bg-yellow-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              👶 Deliveries ({deliveries.length})
+            <button onClick={() => setActiveTab('anc')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'anc' ? 'bg-pink-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              🤰 ANC ({ancVisits.length})
             </button>
-            <button
-              onClick={() => setActiveTab('pnc')}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'pnc' ? 'bg-purple-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              👩‍👧 PNC Visits ({pncVisits.length})
+            <button onClick={() => setActiveTab('delivery')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'delivery' ? 'bg-yellow-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              👶 Delivery ({deliveries.length})
             </button>
-            <button
-              onClick={() => setActiveTab('immunisation')}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                activeTab === 'immunisation' ? 'bg-teal-600 text-white' : 'bg-gray-200 hover:bg-gray-300'
-              }`}
-            >
-              💉 Immunisations ({immunisations.length})
+            <button onClick={() => setActiveTab('pnc')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'pnc' ? 'bg-purple-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              👩‍👧 PNC ({pncVisits.length})
+            </button>
+            <button onClick={() => setActiveTab('immunisation')} className={`px-4 py-2 rounded-lg font-bold transition-colors ${activeTab === 'immunisation' ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              💉 EPI ({immunisations.length})
             </button>
           </div>
           
-          {/* Tab Content: Personal Information */}
+          {/* TAB: Master Timeline (NEW) */}
+          {activeTab === 'timeline' && (
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-black text-gray-800 mb-6 border-b pb-3">Complete Clinical Timeline</h2>
+              
+              {timeline.length === 0 ? (
+                <div className="text-center text-gray-500 py-8 bg-gray-50 rounded-lg">No clinical history recorded for this patient yet.</div>
+              ) : (
+                <div className="relative border-l-4 border-indigo-200 ml-4 md:ml-6 space-y-8 pb-4">
+                  {timeline.map((event) => (
+                    <div key={event.id} className="relative pl-6 md:pl-8">
+                      <div className={`absolute -left-[14px] top-1 w-6 h-6 rounded-full border-4 border-white shadow flex items-center justify-center
+                        ${event.type === 'ANC' ? 'bg-pink-500' : event.type === 'DELIVERY' ? 'bg-yellow-500' : event.type === 'PNC' ? 'bg-purple-500' : 'bg-teal-500'}
+                        ${event.isCritical ? 'animate-pulse ring-2 ring-red-500' : ''}
+                      `}></div>
+                      
+                      <div className={`bg-gray-50 rounded-lg p-5 border-l-4 shadow-sm hover:shadow-md transition-shadow
+                        ${event.type === 'ANC' ? 'border-pink-500' : event.type === 'DELIVERY' ? 'border-yellow-500' : event.type === 'PNC' ? 'border-purple-500' : 'border-teal-500'}
+                        ${event.isCritical ? 'bg-red-50 border-red-500' : ''}
+                      `}>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className={`text-xs font-black px-2 py-1 rounded tracking-wide uppercase 
+                            ${event.type === 'ANC' ? 'bg-pink-200 text-pink-800' : event.type === 'DELIVERY' ? 'bg-yellow-200 text-yellow-800' : event.type === 'PNC' ? 'bg-purple-200 text-purple-800' : 'bg-teal-200 text-teal-800'}`}>
+                            {event.type}
+                          </span>
+                          <span className="text-sm font-bold text-gray-500">{formatDate(event.date)}</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900">{event.title}</h3>
+                        <p className="text-gray-700 font-medium">{event.subtitle}</p>
+                        {event.isCritical && <p className="text-red-600 text-sm font-bold mt-2">⚠️ Critical Alert Logged</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: Personal Information */}
           {activeTab === 'info' && (
             <div className="space-y-6">
-              {/* Demographics */}
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500">
                 <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📋 Demographics</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><span className="text-gray-500">Full Name:</span> <span className="font-medium">{patient.full_name}</span></div>
@@ -479,7 +535,7 @@ export default function PatientDetailPage() {
                   <div><span className="text-gray-500">Village/Town:</span> <span className="font-medium">{patient.village || 'Not provided'}</span></div>
                   <div><span className="text-gray-500">District:</span> <span className="font-medium">{patient.district || 'Not provided'}</span></div>
                   <div><span className="text-gray-500">Blood Group:</span> <span className="font-medium">{patient.blood_group || 'Not recorded'}</span></div>
-                  <div><span className="text-gray-500">Allergies:</span> <span className="font-medium">{patient.allergies || 'None reported'}</span></div>
+                  <div className="md:col-span-2 bg-red-50 p-2 rounded"><span className="text-red-500 font-bold">Allergies:</span> <span className="font-bold text-red-700">{patient.allergies || 'None reported'}</span></div>
                 </div>
               </div>
               
@@ -487,44 +543,24 @@ export default function PatientDetailPage() {
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📱 Emergency QR Code</h2>
                 <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
-                  <div id="qr-code-container" className="bg-gray-50 p-4 rounded-lg">
+                  <div id="qr-code-container" className="bg-gray-50 p-4 rounded-lg shadow-inner">
                     <QRCodeSVG 
                       value={JSON.stringify({
                         patient_id: patient.patient_id,
                         full_name: patient.full_name,
-                        phone: patient.phone,
                         blood_group: patient.blood_group,
                         allergies: patient.allergies,
-                        emergency_contact: patient.next_of_kin_name,
-                        emergency_phone: patient.next_of_kin_phone,
-                        village: patient.village,
-                        district: patient.district
+                        emergency_contact: patient.next_of_kin_phone,
                       })}
-                      size={180}
-                      level="H"
-                      includeMargin={true}
+                      size={180} level="H" includeMargin={true}
                     />
                   </div>
                   <div className="flex-1 text-center md:text-left">
-                    <p className="text-sm text-gray-600 mb-2">
-                      🔐 <strong>Emergency Access QR Code</strong>
-                    </p>
-                    <p className="text-sm text-gray-600 mb-2">
-                      Scan this QR code for immediate access to patient information during emergencies.
-                    </p>
-                    <p className="text-xs text-gray-500 mb-4">
-                      Any health facility can scan this code to retrieve critical patient data including:
-                      allergies, blood group, emergency contacts, and medical history.
-                    </p>
-                    <button 
-                      onClick={() => downloadQRCode(patient.patient_id)}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center gap-2 mx-auto md:mx-0"
-                    >
-                      📥 Download QR Code as PNG
+                    <p className="text-sm text-gray-600 mb-2">🔐 <strong>Emergency Access QR Code</strong></p>
+                    <p className="text-sm text-gray-600 mb-2">Scan this QR code for immediate access to critical patient information.</p>
+                    <button onClick={() => downloadQRCode(patient.patient_id)} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm shadow-md transition-colors">
+                      📥 Download QR Code
                     </button>
-                    <p className="text-xs text-gray-400 mt-3">
-                      Print this code and give to the patient to keep in their wallet or phone case.
-                    </p>
                   </div>
                 </div>
               </div>
@@ -533,101 +569,72 @@ export default function PatientDetailPage() {
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">👨‍👩‍👧‍👦 Family Information</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><span className="text-gray-500">Husband/Partner Name:</span> <span className="font-medium">{patient.husband_name || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Husband/Partner Phone:</span> <span className="font-medium">{patient.husband_phone || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Husband/Partner Occupation:</span> <span className="font-medium">{patient.husband_occupation || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Father&apos;s Name:</span> <span className="font-medium">{patient.father_name || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Father&apos;s Phone:</span> <span className="font-medium">{patient.father_phone || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Father&apos;s Location:</span> <span className="font-medium">{patient.father_location || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Husband Name:</span> <span className="font-medium">{patient.husband_name || '-'}</span></div>
+                  <div><span className="text-gray-500">Husband Phone:</span> <span className="font-medium">{patient.husband_phone || '-'}</span></div>
+                  <div><span className="text-gray-500">Father's Name:</span> <span className="font-medium">{patient.father_name || '-'}</span></div>
+                  <div><span className="text-gray-500">Father's Phone:</span> <span className="font-medium">{patient.father_phone || '-'}</span></div>
                 </div>
               </div>
               
-              {/* Next of Kin / Emergency Contact */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📞 Emergency Contact</h2>
+              {/* Emergency Contact */}
+              <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-400">
+                <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">📞 Next of Kin (Emergency)</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><span className="text-gray-500">Next of Kin Name:</span> <span className="font-medium">{patient.next_of_kin_name || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Relationship:</span> <span className="font-medium">{patient.next_of_kin_relationship || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Next of Kin Phone:</span> <span className="font-medium">{patient.next_of_kin_phone || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Next of Kin Address:</span> <span className="font-medium">{patient.next_of_kin_address || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Primary Decision Maker:</span> <span className="font-medium">{patient.primary_decision_maker || 'Not provided'}</span></div>
-                  <div><span className="text-gray-500">Family Support Level:</span> <span className="font-medium">{patient.family_support_level || 'Not provided'}</span></div>
+                  <div><span className="text-gray-500">Name:</span> <span className="font-medium">{patient.next_of_kin_name || '-'}</span></div>
+                  <div><span className="text-gray-500">Relationship:</span> <span className="font-medium">{patient.next_of_kin_relationship || '-'}</span></div>
+                  <div><span className="text-gray-500">Phone:</span> <span className="font-medium">{patient.next_of_kin_phone || '-'}</span></div>
+                  <div><span className="text-gray-500">Address:</span> <span className="font-medium">{patient.next_of_kin_address || '-'}</span></div>
                 </div>
               </div>
               
-              {/* Pregnancy Specific (if applicable) */}
+              {/* Contextual Logic */}
               {patient.is_pregnant && (
-                <div className="bg-white rounded-lg shadow-md p-6">
-                  <h2 className="text-lg font-bold text-pink-800 mb-4 border-b pb-2">🤰 Pregnancy Information</h2>
+                <div className="bg-pink-50 rounded-lg shadow-md p-6 border border-pink-200">
+                  <h2 className="text-lg font-bold text-pink-800 mb-4 border-b border-pink-200 pb-2">🤰 Pregnancy Stats</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><span className="text-gray-500">Expected Delivery Date (EDD):</span> <span className="font-medium">{formatDate(patient.edd)}</span></div>
-                    <div><span className="text-gray-500">Gestational Age:</span> <span className="font-medium">{patient.gestational_age ? `${patient.gestational_age} weeks` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Gravida (total pregnancies):</span> <span className="font-medium">{patient.gravida || 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Para (live births):</span> <span className="font-medium">{patient.para || 'Not recorded'}</span></div>
+                    <div><span className="text-gray-600">EDD:</span> <span className="font-bold">{formatDate(patient.edd)}</span></div>
+                    <div><span className="text-gray-600">Gravida/Para:</span> <span className="font-bold">{patient.gravida || '?'}/{patient.para || '?'}</span></div>
                   </div>
                 </div>
               )}
-              
-              {/* Breastfeeding Specific (if applicable) */}
-              {patient.is_breastfeeding && (
-                <div className="bg-white rounded-lg shadow-md p-6">
-                  <h2 className="text-lg font-bold text-blue-800 mb-4 border-b pb-2">🤱 Breastfeeding Information</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><span className="text-gray-500">Last Delivery Date:</span> <span className="font-medium">{formatDate(patient.last_delivery_date)}</span></div>
-                    <div><span className="text-gray-500">Baby Birth Weight:</span> <span className="font-medium">{patient.birth_weight ? `${patient.birth_weight} kg` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Baby Birth Length:</span> <span className="font-medium">{patient.birth_length ? `${patient.birth_length} cm` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Exclusive Breastfeeding:</span> <span className="font-medium">{patient.exclusive_breastfeeding ? '✅ Yes' : '❌ No'}</span></div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Child Specific (if applicable) */}
               {patient.is_child_under_5 && (
-                <div className="bg-white rounded-lg shadow-md p-6">
-                  <h2 className="text-lg font-bold text-teal-800 mb-4 border-b pb-2">👶 Child Information</h2>
+                <div className="bg-teal-50 rounded-lg shadow-md p-6 border border-teal-200">
+                  <h2 className="text-lg font-bold text-teal-800 mb-4 border-b border-teal-200 pb-2">👶 Child Stats</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><span className="text-gray-500">Birth Weight:</span> <span className="font-medium">{patient.birth_weight ? `${patient.birth_weight} kg` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Birth Length:</span> <span className="font-medium">{patient.birth_length ? `${patient.birth_length} cm` : 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Guardian Name:</span> <span className="font-medium">{patient.guardian_name || 'Not recorded'}</span></div>
-                    <div><span className="text-gray-500">Guardian Phone:</span> <span className="font-medium">{patient.guardian_phone || 'Not recorded'}</span></div>
+                    <div><span className="text-gray-600">Birth Weight:</span> <span className="font-bold">{patient.birth_weight ? `${patient.birth_weight} kg` : '-'}</span></div>
+                    <div><span className="text-gray-600">Guardian:</span> <span className="font-bold">{patient.guardian_name || '-'}</span></div>
                   </div>
                 </div>
               )}
             </div>
           )}
           
-          {/* Tab Content: ANC Visits */}
+          {/* TAB: ANC */}
           {activeTab === 'anc' && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="bg-white rounded-lg shadow-md overflow-hidden border-t-4 border-pink-500">
               {ancVisits.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No ANC visits recorded.</p>
-                  <Link href={`/anc?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record first ANC visit →</Link>
-                </div>
+                <div className="p-8 text-center text-gray-500">No ANC visits recorded.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full">
-                    <thead className="bg-pink-50">
+                    <thead className="bg-pink-50 text-pink-800 text-left text-xs font-bold uppercase">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">Visit #</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">Weeks</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">Weight (kg)</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">BP</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">FHR</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-pink-700 uppercase">Risk</th>
+                        <th className="px-4 py-3">Visit #</th><th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Weeks</th><th className="px-4 py-3">Weight</th>
+                        <th className="px-4 py-3">BP</th><th className="px-4 py-3">FHR</th>
+                        <th className="px-4 py-3">Risk</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {ancVisits.map((visit) => (
-                        <tr key={visit.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm">{visit.visit_number}</td>
-                          <td className="px-4 py-3 text-sm">{formatDate(visit.visit_date)}</td>
-                          <td className="px-4 py-3 text-sm">{visit.gestational_age || '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.weight || '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.blood_pressure_systolic && visit.blood_pressure_diastolic ? `${visit.blood_pressure_systolic}/${visit.blood_pressure_diastolic}` : '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.fetal_heart_rate || '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.is_high_risk ? '🔴 High' : '🟢 Normal'}</td>
+                      {ancVisits.map((v) => (
+                        <tr key={v.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-bold">{v.visit_number}</td>
+                          <td className="px-4 py-3 text-sm">{formatDate(v.visit_date)}</td>
+                          <td className="px-4 py-3 text-sm">{v.gestational_age || '-'}</td>
+                          <td className="px-4 py-3 text-sm">{v.weight || '-'}</td>
+                          <td className="px-4 py-3 text-sm">{v.blood_pressure_systolic && v.blood_pressure_diastolic ? `${v.blood_pressure_systolic}/${v.blood_pressure_diastolic}` : '-'}</td>
+                          <td className="px-4 py-3 text-sm">{v.fetal_heart_rate || '-'}</td>
+                          <td className="px-4 py-3 text-sm font-bold">{v.is_high_risk ? '🔴 High' : '🟢 Normal'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -637,36 +644,30 @@ export default function PatientDetailPage() {
             </div>
           )}
           
-          {/* Tab Content: Deliveries */}
+          {/* TAB: Delivery */}
           {activeTab === 'delivery' && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="bg-white rounded-lg shadow-md overflow-hidden border-t-4 border-yellow-500">
               {deliveries.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No delivery records found.</p>
-                  <Link href={`/delivery?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record delivery →</Link>
-                </div>
+                <div className="p-8 text-center text-gray-500">No delivery records found.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full">
-                    <thead className="bg-yellow-50">
+                    <thead className="bg-yellow-50 text-yellow-800 text-left text-xs font-bold uppercase">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">Mode</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">Baby Name</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">Weight</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">APGAR 5min</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-yellow-700 uppercase">Outcome</th>
+                        <th className="px-4 py-3">Date</th><th className="px-4 py-3">Mode</th>
+                        <th className="px-4 py-3">Baby Name</th><th className="px-4 py-3">Weight</th>
+                        <th className="px-4 py-3">APGAR 5min</th><th className="px-4 py-3">Outcome</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {deliveries.map((delivery) => (
-                        <tr key={delivery.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm">{formatDate(delivery.delivery_date)}</td>
-                          <td className="px-4 py-3 text-sm">{delivery.mode_of_delivery}</td>
-                          <td className="px-4 py-3 text-sm font-medium">{delivery.baby_name || 'Not named'}</td>
-                          <td className="px-4 py-3 text-sm">{delivery.birth_weight ? `${delivery.birth_weight} kg` : '-'}</td>
-                          <td className="px-4 py-3 text-sm">{delivery.apgar_5min || '-'}</td>
-                          <td className="px-4 py-3 text-sm">{delivery.maternal_outcome || '-'}</td>
+                      {deliveries.map((d) => (
+                        <tr key={d.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm">{formatDate(d.delivery_date)}</td>
+                          <td className="px-4 py-3 text-sm">{d.mode_of_delivery}</td>
+                          <td className="px-4 py-3 text-sm font-bold">{d.baby_name || '-'}</td>
+                          <td className="px-4 py-3 text-sm">{d.birth_weight ? `${d.birth_weight} kg` : '-'}</td>
+                          <td className="px-4 py-3 text-sm">{d.apgar_5min || '-'}</td>
+                          <td className="px-4 py-3 text-sm">{d.maternal_outcome || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -676,36 +677,30 @@ export default function PatientDetailPage() {
             </div>
           )}
           
-          {/* Tab Content: PNC Visits */}
+          {/* TAB: PNC */}
           {activeTab === 'pnc' && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="bg-white rounded-lg shadow-md overflow-hidden border-t-4 border-purple-500">
               {pncVisits.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No PNC visits recorded.</p>
-                  <Link href={`/pnc?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record first PNC visit →</Link>
-                </div>
+                <div className="p-8 text-center text-gray-500">No PNC visits recorded.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full">
-                    <thead className="bg-purple-50">
+                    <thead className="bg-purple-50 text-purple-800 text-left text-xs font-bold uppercase">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">Type</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">Mother BP</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">Baby Weight</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">Breastfeeding</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-purple-700 uppercase">EPDS</th>
+                        <th className="px-4 py-3">Type</th><th className="px-4 py-3">Date</th>
+                        <th className="px-4 py-3">Mother BP</th><th className="px-4 py-3">Baby Wt</th>
+                        <th className="px-4 py-3">Feeding</th><th className="px-4 py-3">EPDS</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {pncVisits.map((visit) => (
-                        <tr key={visit.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm">{visit.visit_type}</td>
-                          <td className="px-4 py-3 text-sm">{formatDate(visit.visit_date)}</td>
-                          <td className="px-4 py-3 text-sm">{visit.mother_bp_systolic && visit.mother_bp_diastolic ? `${visit.mother_bp_systolic}/${visit.mother_bp_diastolic}` : '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.baby_weight ? `${visit.baby_weight} kg` : '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.breastfeeding_status || '-'}</td>
-                          <td className="px-4 py-3 text-sm">{visit.epds_score ? `${visit.epds_score}/30` : '-'}</td>
+                      {pncVisits.map((p) => (
+                        <tr key={p.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-bold">{p.visit_type}</td>
+                          <td className="px-4 py-3 text-sm">{formatDate(p.visit_date)}</td>
+                          <td className="px-4 py-3 text-sm">{p.mother_bp_systolic && p.mother_bp_diastolic ? `${p.mother_bp_systolic}/${p.mother_bp_diastolic}` : '-'}</td>
+                          <td className="px-4 py-3 text-sm">{p.baby_weight ? `${p.baby_weight} kg` : '-'}</td>
+                          <td className="px-4 py-3 text-sm">{p.breastfeeding_status || '-'}</td>
+                          <td className="px-4 py-3 text-sm font-bold">{p.epds_score ? `${p.epds_score}/30` : '-'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -715,32 +710,27 @@ export default function PatientDetailPage() {
             </div>
           )}
           
-          {/* Tab Content: Immunisations */}
+          {/* TAB: Immunisations */}
           {activeTab === 'immunisation' && (
-            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="bg-white rounded-lg shadow-md overflow-hidden border-t-4 border-teal-500">
               {immunisations.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <p>No immunisation records found.</p>
-                  <Link href={`/immunisation?patient=${patientId}`} className="text-green-600 underline mt-2 inline-block">Record immunisation →</Link>
-                </div>
+                <div className="p-8 text-center text-gray-500">No EPI records found.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full">
-                    <thead className="bg-teal-50">
+                    <thead className="bg-teal-50 text-teal-800 text-left text-xs font-bold uppercase">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-teal-700 uppercase">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-teal-700 uppercase">Vaccine</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-teal-700 uppercase">Dose</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-teal-700 uppercase">Admin By</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-teal-700 uppercase">Reaction</th>
+                        <th className="px-4 py-3">Date</th><th className="px-4 py-3">Vaccine</th>
+                        <th className="px-4 py-3">Dose</th><th className="px-4 py-3">Admin By</th>
+                        <th className="px-4 py-3">Reaction</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {immunisations.map((imm) => (
                         <tr key={imm.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm">{formatDate(imm.administration_date)}</td>
-                          <td className="px-4 py-3 text-sm font-medium">{imm.vaccine_name}</td>
-                          <td className="px-4 py-3 text-sm">{imm.dose_number}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-teal-700">{imm.vaccine_name}</td>
+                          <td className="px-4 py-3 text-sm font-bold">{imm.dose_number}</td>
                           <td className="px-4 py-3 text-sm">{imm.administered_by || '-'}</td>
                           <td className="px-4 py-3 text-sm">{imm.adverse_reaction ? '⚠️ Yes' : '✅ No'}</td>
                         </tr>
@@ -751,6 +741,7 @@ export default function PatientDetailPage() {
               )}
             </div>
           )}
+
         </div>
       </div>
     </>
