@@ -206,9 +206,21 @@ export default function PharmacyPage() {
 
   const canDispense = hasPermission('canDispenseMedication')
 
-  // ROLE CHECK: Only Admins or Pharmacy Managers can add new boxes to the shelf
-  const userRole = ((user as any)?.role || '').toLowerCase()
-  const canManageInventory = ['admin', 'pharmacy_manager', 'chief_pharmacist'].includes(userRole)
+  // ROLE CHECK: Extended to include superadmin, master, facility admin
+  const userRole = ((user as any)?.user_metadata?.role || (user as any)?.role || '').toLowerCase()
+  const userName = ((user as any)?.user_metadata?.full_name || (user as any)?.email || '').toLowerCase()
+  
+  const canManageInventory = [
+    'admin', 
+    'master', 
+    'master admin',
+    'superadmin', 
+    'super admin',
+    'facility_admin',
+    'facility admin',
+    'pharmacy_manager', 
+    'chief_pharmacist'
+  ].includes(userRole) || userName.includes('master') || userName.includes('admin')
 
   useEffect(() => {
     loadData()
@@ -551,7 +563,6 @@ export default function PharmacyPage() {
         prescription_id: pres.prescription_id
       };
 
-      // FIXED: Saves offline and optimistically updates UI!
       await saveOffline('dispensings', { id: dispId, ...dispensingRecord });
 
       setPrescriptions(prev => prev.map(p => p.prescription_id === pres.prescription_id ? { ...p, status: 'dispensed' } : p));
@@ -670,7 +681,7 @@ export default function PharmacyPage() {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                         <div className="md:col-span-3">
                           <label className="block text-indigo-900 font-bold mb-1">Select Medicine from Formulary</label>
-                          <select required value={stockData.medicine_id} onChange={(e) => setStockData({...stockData, medicine_id: e.target.value})} className="w-full px-3 py-2 border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500">
+                          <select required value={stockData.medicine_id} onChange={(e) => setStockData({...stockData, medicine_id: e.target.value})} className="w-full px-3 py-2 border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 bg-white">
                             <option value="">-- Select --</option>
                             {medicines.map(m => <option key={m.medicine_id} value={m.medicine_id}>{m.generic_name} {m.brand_name ? `(${m.brand_name})` : ''}</option>)}
                           </select>
